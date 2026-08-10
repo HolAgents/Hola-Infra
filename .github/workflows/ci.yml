@@ -135,7 +135,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
           oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
-          region: cn-hangzhou
+          audience: sts.aliyuncs.com
 
       - name: Deploy to staging
         working-directory: fc
@@ -166,7 +166,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
           oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
-          region: cn-hangzhou
+          audience: sts.aliyuncs.com
 
       - name: Deploy to production
         working-directory: fc
