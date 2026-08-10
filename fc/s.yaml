@@ -48,7 +48,7 @@ services:
         - type: http
           name: webhook-http
           qualifier: LATEST
-          triggerConfig:
+          config:
             authType: anonymous
             methods:
               - GET
