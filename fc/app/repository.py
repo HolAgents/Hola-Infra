@@ -224,16 +224,27 @@ def ack_batch(
             conn.execute(
                 """UPDATE events
                    SET status = 'completed', completed_at = datetime('now'),
-                       agent_id = ?, error_message = ?
+                       agent_id = ?, error_message = ?,
+                       task_status = COALESCE(?, task_status),
+                       commit_sha = COALESCE(?, commit_sha),
+                       session_id = COALESCE(?, session_id),
+                       identity_name = COALESCE(?, identity_name),
+                       target_id = COALESCE(?, target_id)
                    WHERE id = ?""",
-                (agent_id, message, event_id),
+                (agent_id, message,
+                 r.get("task_status"), r.get("commit_sha"),
+                 r.get("session_id"), r.get("identity_name"),
+                 r.get("target_id"), event_id),
             )
         elif new_status == "failed":
             conn.execute(
                 """UPDATE events
-                   SET status = 'failed', error_message = ?, agent_id = ?
+                   SET status = 'failed', error_message = ?, agent_id = ?,
+                       task_status = COALESCE(?, task_status),
+                       commit_sha = COALESCE(?, commit_sha)
                    WHERE id = ?""",
-                (message, agent_id, event_id),
+                (message, agent_id,
+                 r.get("task_status"), r.get("commit_sha"), event_id),
             )
         else:
             rejected.append({"event_id": event_id, "reason": f"invalid status {new_status}"})
@@ -290,3 +301,77 @@ def query_events(
         d["payload"] = json.loads(d["payload"])
         results.append(d)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Query by commit SHA
+# ---------------------------------------------------------------------------
+
+def query_by_commit(conn, commit_sha: str) -> dict | None:
+    """Return the work event associated with *commit_sha*.
+
+    Only searches work-type events (issues, pull_request, push,
+    issue_comment).  CI trigger events (workflow_run, check_run) are
+    ignored — they hold ``commit_sha`` for linking but are not tasks.
+    """
+    row = conn.execute(
+        """SELECT id, delivery_id, event_type, repo_full_name, payload,
+                  identity_name, target_id, session_id, commit_sha,
+                  task_status, claim_token, received_at
+           FROM events
+           WHERE commit_sha = ?
+             AND event_type IN ('issues', 'pull_request', 'push', 'issue_comment')
+           ORDER BY id DESC LIMIT 1""",
+        (commit_sha,),
+    ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["payload"] = json.loads(d["payload"])
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Partial update (PATCH)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_PATCH_FIELDS = {
+    "task_status", "session_id", "commit_sha",
+    "identity_name", "target_id",
+}
+
+
+def patch_event(conn, event_id: int, patch: dict) -> dict | None:
+    """Partially update an event.  ``claim_token`` is required for ownership
+    verification.  Only whitelisted fields are written.
+
+    Returns the updated row as a dict, or ``None`` when the event is not
+    found or the claim_token doesn't match.
+    """
+    row = conn.execute(
+        "SELECT claim_token, status FROM events WHERE id = ?", (event_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    if row["claim_token"] != patch.pop("claim_token", None):
+        return None  # token mismatch
+
+    sets: list[str] = []
+    params: list[Any] = []
+    for k, v in patch.items():
+        if k in _ALLOWED_PATCH_FIELDS and v is not None:
+            sets.append(f"{k} = ?")
+            params.append(v)
+
+    if not sets:
+        return None
+
+    params.append(event_id)
+    conn.execute(
+        f"UPDATE events SET {', '.join(sets)} WHERE id = ?", params
+    )
+    conn.commit()
+    result = conn.execute(
+        "SELECT * FROM events WHERE id = ?", (event_id,)
+    ).fetchone()
+    return dict(result) if result else None

@@ -126,3 +126,80 @@ class TestCommentRouting:
         d = route(ev)
         assert d.should_dispatch is False
         assert d.skip_ack is True
+
+
+# ---------------------------------------------------------------------------
+# FC Client new methods (integration-style with monkeypatch)
+# ---------------------------------------------------------------------------
+
+
+class TestFCClientNewMethods:
+    """Test query_by_commit and patch_event via mocked HTTP."""
+
+    @staticmethod
+    def _make_fc(methods):
+        """Create an FCClient with mocked httpx.Client methods."""
+        from dispatcher.fc_client import FCClient
+        import httpx
+
+        class _MockClient:
+            def __init__(self):
+                pass
+            def close(self):
+                pass
+
+        # Add mocked methods
+        for name, fn in methods.items():
+            setattr(_MockClient, name, fn)
+
+        fc = FCClient.__new__(FCClient)
+        fc._base = "http://fake"
+        fc._api_key = "fake-key"
+        fc._client = _MockClient()
+        return fc
+
+    def test_query_by_commit_found(self):
+        class _FakeResp:
+            status_code = 200
+            @staticmethod
+            def json():
+                return {"id": 1, "identity_name": "holagent001"}
+            @staticmethod
+            def raise_for_status():
+                pass
+
+        fc = self._make_fc({"get": lambda self, url: _FakeResp()})
+        result = fc.query_by_commit("abc")
+        assert result == {"id": 1, "identity_name": "holagent001"}
+
+    def test_query_by_commit_not_found(self):
+        class _Fake404:
+            status_code = 404
+
+        fc = self._make_fc({"get": lambda self, url: _Fake404()})
+        result = fc.query_by_commit("nonexistent")
+        assert result is None
+
+    def test_query_by_commit_network_error(self):
+        import httpx
+
+        def _fake_get(self, url):
+            raise httpx.ConnectError("timeout")
+
+        fc = self._make_fc({"get": _fake_get})
+        result = fc.query_by_commit("any")
+        assert result is None
+
+    def test_patch_event_success(self):
+        class _FakeOK:
+            status_code = 200
+
+        fc = self._make_fc({"patch": lambda self, url, json=None: _FakeOK()})
+        assert fc.patch_event(1, {"task_status": "pushed"}) is True
+
+    def test_patch_event_failure(self):
+        class _FakeErr:
+            status_code = 500
+
+        fc = self._make_fc({"patch": lambda self, url, json=None: _FakeErr()})
+        assert fc.patch_event(1, {"task_status": "pushed"}) is False

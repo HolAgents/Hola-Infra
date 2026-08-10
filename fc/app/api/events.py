@@ -12,10 +12,11 @@ from app.models import (
     AckResponse,
     ClaimRequest,
     ClaimResponse,
+    EventPatchRequest,
 )
 from app.security import require_api_key
 from app.services.claiming import do_ack, do_claim
-from app.repository import query_events, get_event
+from app.repository import query_events, get_event, query_by_commit, patch_event
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,39 @@ def list_events(
     finally:
         conn.close()
     return {"events": events, "count": len(events)}
+
+
+@router.get("/by-commit/{commit_sha}", summary="Query task by commit SHA")
+def get_by_commit(commit_sha: str):
+    """Return the work event associated with *commit_sha*.
+
+    Searches only work-type events (issues, pull_request, push,
+    issue_comment).  Returns 404 when no task is linked to the commit.
+    """
+    conn = get_connection()
+    try:
+        ev = query_by_commit(conn, commit_sha)
+    finally:
+        conn.close()
+    if ev is None:
+        raise HTTPException(status_code=404, detail="no task found for commit")
+    return ev
+
+
+@router.patch("/{event_id}", summary="Partially update an event")
+def patch_one_event(event_id: int, body: EventPatchRequest):
+    """Update specific fields of an event.  Requires *claim_token* for
+    ownership verification.  Only allowed fields are written; others are
+    silently ignored.
+    """
+    conn = get_connection()
+    try:
+        result = patch_event(conn, event_id, body.model_dump())
+    finally:
+        conn.close()
+    if result is None:
+        raise HTTPException(status_code=404, detail="event not found or token mismatch")
+    return result
 
 
 @router.get("/{event_id}", summary="Get single event")

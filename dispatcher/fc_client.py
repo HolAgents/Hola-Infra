@@ -83,5 +83,36 @@ class FCClient:
         except Exception:
             return False
 
+    # ------------------------------------------------------------------
+    # Query by commit SHA (CI resume)
+    # ------------------------------------------------------------------
+
+    def query_by_commit(self, commit_sha: str) -> dict[str, Any] | None:
+        """GET /api/events/by-commit/{sha} — find task by commit SHA."""
+        try:
+            resp = self._client.get(
+                f"{self._base}/api/events/by-commit/{commit_sha}"
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Partial update (CI resume)
+    # ------------------------------------------------------------------
+
+    def patch_event(self, event_id: int, patch: dict[str, Any]) -> bool:
+        """PATCH /api/events/{id} — partially update an event."""
+        try:
+            resp = self._client.patch(
+                f"{self._base}/api/events/{event_id}", json=patch
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     def close(self) -> None:
         self._client.close()

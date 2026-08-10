@@ -28,6 +28,9 @@ class AgentIdentity:
     gh_user: str               # GitHub username the agent acts as
     repo_scope: list[str] = field(default_factory=list)  # repos this agent handles
     claude_prompt_template: str = ""  # custom prompt prefix
+    # ---- CI Resume ----
+    target_id: str = "claude-code"   # agent adapter type (claude-code, hermes, etc.)
+    identity_name: str = ""          # Hola-Switch identity name (defaults to gh_user)
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +45,8 @@ _IDENTITIES: dict[str, list[AgentIdentity]] = {
             display_name="Issue Triage Agent",
             gh_user="hola-bot",
             repo_scope=["HolAgents/*"],
+            target_id="claude-code",
+            identity_name="holagent001",
         ),
     ],
     "review": [
@@ -51,6 +56,8 @@ _IDENTITIES: dict[str, list[AgentIdentity]] = {
             display_name="PR Review Agent",
             gh_user="hola-bot",
             repo_scope=["HolAgents/*"],
+            target_id="claude-code",
+            identity_name="holagent001",
         ),
     ],
     "quality": [
@@ -60,6 +67,8 @@ _IDENTITIES: dict[str, list[AgentIdentity]] = {
             display_name="Commit Quality Agent",
             gh_user="hola-bot",
             repo_scope=["HolAgents/*"],
+            target_id="claude-code",
+            identity_name="holagent001",
         ),
     ],
     "response": [
@@ -69,6 +78,8 @@ _IDENTITIES: dict[str, list[AgentIdentity]] = {
             display_name="Comment Response Agent",
             gh_user="hola-bot",
             repo_scope=["HolAgents/*"],
+            target_id="claude-code",
+            identity_name="holagent001",
         ),
     ],
     "ci-debug": [
@@ -78,6 +89,8 @@ _IDENTITIES: dict[str, list[AgentIdentity]] = {
             display_name="CI Debug Agent",
             gh_user="hola-bot",
             repo_scope=["HolAgents/*"],
+            target_id="claude-code",
+            identity_name="holagent001",
         ),
     ],
 }
@@ -115,3 +128,23 @@ def _repo_matches(repo: str, scope: str) -> bool:
         owner = scope[:-2]
         return repo.startswith(owner + "/")
     return repo == scope
+
+
+# ---------------------------------------------------------------------------
+# Re-bind detection (CI resume)
+# ---------------------------------------------------------------------------
+
+
+def get_current_target(identity_name: str) -> str | None:
+    """Return the currently bound *target_id* for *identity_name*.
+
+    Current implementation searches the local in-memory registry.
+    When Hola-Switch API is available, this will be swapped to an HTTP
+    call with a local TTL cache.
+    """
+    for identities in _IDENTITIES.values():
+        for ident in identities:
+            if ident.identity_name == identity_name:
+                return ident.target_id
+    logger.warning("no identity found for identity_name=%s", identity_name)
+    return None
