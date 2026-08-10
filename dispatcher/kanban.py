@@ -90,3 +90,163 @@ class KanbanClient:
 
     def close(self) -> None:
         self._client.close()
+
+
+# ---------------------------------------------------------------------------
+# One-shot init: create org-level ProjectV2 with Status columns
+# ---------------------------------------------------------------------------
+
+CREATE_PROJECT = """
+mutation($org: ID!, $title: String!) {
+  createProjectV2(input: {
+    ownerId: $org
+    title: $title
+  }) {
+    projectV2 { id }
+  }
+}
+"""
+
+GET_ORG_ID = """
+query($org: String!) {
+  organization(login: $org) { id }
+}
+"""
+
+GET_STATUS_FIELD = """
+query($project: ID!) {
+  node(id: $project) {
+    ... on ProjectV2 {
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            options { id name }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+ADD_STATUS_OPTION = """
+mutation($project: ID!, $field: ID!, $name: String!, $color: String!) {
+  createProjectV2SingleSelectFieldOption(input: {
+    projectId: $project
+    fieldId: $field
+    name: $name
+    color: $color
+  }) {
+    clientMutationId
+  }
+}
+"""
+
+DELETE_DEFAULT_OPTIONS = """
+mutation($project: ID!, $options: [ProjectV2StatusOption!]!) {
+  deleteProjectV2Status(input: {
+    projectId: $project
+    statusId: $options
+  }) {
+    clientMutationId
+  }
+}
+"""
+
+STATUS_COLUMNS = [
+    ("Backlog",      "GRAY"),
+    ("Ready",        "BLUE"),
+    ("In progress",  "YELLOW"),
+    ("In review",    "PURPLE"),
+    ("Done",         "GREEN"),
+]
+
+
+def init_project(org_name: str, project_title: str, token: str) -> dict:
+    """Create an org-level ProjectV2 Kanban and return its config IDs.
+
+    Returns a dict ready to paste into ``dispatcher/.env``::
+
+        {
+          "github_project_id": "PVT_xxx",
+          "github_status_field_id": "PVTSSF_yyy",
+          "kanban_backlog_id":       "...",
+          "kanban_ready_id":         "...",
+          "kanban_in_progress_id":   "...",
+          "kanban_in_review_id":     "...",
+          "kanban_done_id":          "...",
+        }
+    """
+    client = httpx.Client(
+        base_url="https://api.github.com",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        timeout=30,
+    )
+
+    def gql(query: str, variables: dict) -> dict:
+        resp = client.post("/graphql", json={"query": query, "variables": variables})
+        resp.raise_for_status()
+        data = resp.json()
+        if "errors" in data:
+            raise RuntimeError(f"GraphQL error: {data['errors']}")
+        return data["data"]
+
+    # 1. Get org node ID
+    data = gql(GET_ORG_ID, {"org": org_name})
+    org_id = data["organization"]["id"]
+    print(f"Org ID: {org_id}")
+
+    # 2. Create project
+    data = gql(CREATE_PROJECT, {"org": org_id, "title": project_title})
+    project_id = data["createProjectV2"]["projectV2"]["id"]
+    print(f"Project ID: {project_id}")
+
+    # 3. Get Status field (GitHub auto-creates one with default options)
+    data = gql(GET_STATUS_FIELD, {"project": project_id})
+    fields = data["node"]["fields"]["nodes"]
+    status_field = next((f for f in fields if f["name"] == "Status"), None)
+    if not status_field:
+        raise RuntimeError("Status field not found on new project")
+    field_id = status_field["id"]
+    print(f"Status field ID: {field_id}")
+
+    # 4. GitHub auto-creates "Todo", "In Progress", "Done" — rename/replace
+    # Strategy: add our 5 columns, then optionally delete originals
+    existing = {o["name"]: o["id"] for o in status_field["options"]}
+    print(f"Existing options: {list(existing.keys())}")
+
+    result: dict[str, str] = {
+        "github_project_id": project_id,
+        "github_status_field_id": field_id,
+    }
+
+    for name, color in STATUS_COLUMNS:
+        if name in existing:
+            result[f"kanban_{_slug(name)}"] = existing[name]
+            print(f"  {name}: {existing[name]} (existing)")
+        else:
+            gql(ADD_STATUS_OPTION, {
+                "project": project_id,
+                "field": field_id,
+                "name": name,
+                "color": color,
+            })
+            # Re-fetch to get the new option ID
+            data = gql(GET_STATUS_FIELD, {"project": project_id})
+            opts = data["node"]["fields"]["nodes"][0]["options"]
+            opt = next(o for o in opts if o["name"] == name)
+            result[f"kanban_{_slug(name)}"] = opt["id"]
+            print(f"  {name}: {opt['id']} (created)")
+
+    client.close()
+    return result
+
+
+def _slug(name: str) -> str:
+    return name.lower().replace(" ", "_")
+
