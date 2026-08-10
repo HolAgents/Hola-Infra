@@ -1,20 +1,10 @@
-name: CI — FC Webhook + Dispatcher
+name: CI
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'fc/**'
-      - 'dispatcher/**'
-      - 'tests/**'
-      - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'fc/**'
-      - 'dispatcher/**'
-      - 'tests/**'
-      - '.github/workflows/ci.yml'
 
 jobs:
   # ------------------------------------------------------------------
