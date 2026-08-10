@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -103,3 +103,33 @@ jobs:
           assert svc['props']['function']['instanceConcurrency'] == 1
           print('s.yaml: OK')
           "
+
+  deploy:
+    name: Deploy to Alibaba Cloud FC
+    runs-on: ubuntu-latest
+    needs: [test, fc-smoke, validate-config]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Serverless Devs
+        run: npm install -g @serverless-devs/s
+
+      - name: Configure Alibaba Cloud credentials
+        run: |
+          s config add \
+            --access default \
+            --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
+            --AccessKeyID ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }} \
+            --AccessKeySecret ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
+
+      - name: Deploy to FC
+        working-directory: fc
+        env:
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: s deploy -y
