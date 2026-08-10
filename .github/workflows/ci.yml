@@ -47,12 +47,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r fc/requirements.txt httpx
       - name: Smoke test
+        working-directory: fc
         env:
           GITHUB_WEBHOOK_SECRET: ci_test_secret
           API_KEY: ci_test_api_key
           DB_PATH: /tmp/ci_smoke.db
         run: |
-          python -m uvicorn fc.main:app --host 0.0.0.0 --port 9876 &
+          python -m uvicorn main:app --host 0.0.0.0 --port 9876 &
           UVICORN_PID=$!
           sleep 3
 

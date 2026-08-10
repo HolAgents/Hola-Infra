@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import Header, HTTPException, Request, status
 
-from fc.app.config import get_settings
+from app.config import get_settings
 
 
 # ---------------------------------------------------------------------------

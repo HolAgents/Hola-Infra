@@ -11,7 +11,7 @@ import sqlite3
 import uuid
 from typing import Any, Optional
 
-from fc.app.config import get_settings
+from app.config import get_settings
 
 
 # ---------------------------------------------------------------------------

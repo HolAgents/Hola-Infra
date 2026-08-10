@@ -31,7 +31,7 @@ services:
             - python3
             - -m
             - uvicorn
-            - fc.main:app
+            - main:app
             - --host
             - "0.0.0.0"
             - --port

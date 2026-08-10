@@ -4,16 +4,16 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from fc.app.db import get_connection
-from fc.app.models import (
+from app.db import get_connection
+from app.models import (
     AckRequest,
     AckResponse,
     ClaimRequest,
     ClaimResponse,
 )
-from fc.app.security import require_api_key
-from fc.app.services.claiming import do_ack, do_claim
-from fc.app.repository import query_events, get_event
+from app.security import require_api_key
+from app.services.claiming import do_ack, do_claim
+from app.repository import query_events, get_event
 
 logger = logging.getLogger(__name__)
 

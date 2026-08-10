@@ -6,10 +6,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from fc.app.db import get_connection
-from fc.app.models import IngestResponse
-from fc.app.security import validate_webhook_headers, verify_github_signature
-from fc.app.services.ingest import handle_webhook
+from app.db import get_connection
+from app.models import IngestResponse
+from app.security import validate_webhook_headers, verify_github_signature
+from app.services.ingest import handle_webhook
 
 logger = logging.getLogger(__name__)
 

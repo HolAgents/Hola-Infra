@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter
 
-from fc.app.db import get_connection
-from fc.app.models import HealthResponse
+from app.db import get_connection
+from app.models import HealthResponse
 
 router = APIRouter(tags=["health"])
 

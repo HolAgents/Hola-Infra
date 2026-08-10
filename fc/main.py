@@ -7,8 +7,8 @@ import logging
 
 from fastapi import FastAPI
 
-from fc.app.api import webhooks, events, health
-from fc.app.config import get_settings
+from app.api import webhooks, events, health
+from app.config import get_settings
 
 settings = get_settings()
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -28,4 +28,4 @@ app.include_router(health.router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("fc.main:app", host="0.0.0.0", port=9000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=9000, reload=True)

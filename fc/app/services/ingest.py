@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fc.app.config import get_settings
-from fc.app.repository import insert_event
+from app.config import get_settings
+from app.repository import insert_event
 
 logger = logging.getLogger(__name__)
 

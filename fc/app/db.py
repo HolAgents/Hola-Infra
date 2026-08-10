@@ -4,7 +4,7 @@ import sqlite3
 import os
 from pathlib import Path
 
-from fc.app.config import get_settings
+from app.config import get_settings
 
 _SCHEMA: str | None = None
 

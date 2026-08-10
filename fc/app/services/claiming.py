@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fc.app.repository import claim_batch, ack_batch, query_events, get_event
+from app.repository import claim_batch, ack_batch, query_events, get_event
 
 logger = logging.getLogger(__name__)
 
