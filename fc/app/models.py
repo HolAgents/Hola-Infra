@@ -54,6 +54,12 @@ class AckItem(BaseModel):
     status: str                     # "completed" | "failed"
     agent_id: Optional[str] = None
     message: Optional[str] = None
+    # ---- CI Resume 新增 ----
+    task_status: Optional[str] = None    # pushed | ci_failed | ci_passed | done
+    commit_sha: Optional[str] = None
+    session_id: Optional[str] = None
+    identity_name: Optional[str] = None
+    target_id: Optional[str] = None
 
 
 class AckRejected(BaseModel):
@@ -68,6 +74,19 @@ class AckRequest(BaseModel):
 class AckResponse(BaseModel):
     acked: int
     rejected: list[AckRejected]
+
+
+# ---------------------------------------------------------------------------
+# Partial update (PATCH)
+# ---------------------------------------------------------------------------
+
+class EventPatchRequest(BaseModel):
+    claim_token: str                           # required for ownership check
+    task_status: Optional[str] = None
+    session_id: Optional[str] = None
+    commit_sha: Optional[str] = None
+    identity_name: Optional[str] = None
+    target_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

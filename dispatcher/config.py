@@ -25,6 +25,10 @@ class DispatcherSettings(BaseSettings):
     # ---- agent filtering ----
     agent_skip_senders: str = "hola-bot"
 
+    # ---- Hola-Switch (future) ----
+    hola_switch_api_url: str = ""       # empty = use local identity registry
+    hola_switch_cache_ttl: int = 300    # identity binding cache (seconds)
+
     # ---- logging ----
     log_level: str = "INFO"
 

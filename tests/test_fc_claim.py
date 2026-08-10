@@ -150,3 +150,123 @@ def test_push_and_pr_exclusion_different_keys(api_key_headers, client):
 
     resp = client.post("/api/events/claim", json={"limit": 10}, headers=api_key_headers)
     assert resp.json()["count"] == 1  # Push always claimable (no issue number to block)
+
+
+# ---------------------------------------------------------------------------
+# Ack with CI-Resume fields
+# ---------------------------------------------------------------------------
+
+
+def test_ack_with_task_fields(api_key_headers, client):
+    """Ack with task_status, commit_sha, session_id → stored in events."""
+    _ingest(client, _make_issue_payload(10), delivery="ack-new-001")
+    resp = client.post("/api/events/claim", json={"limit": 1}, headers=api_key_headers)
+    ev = resp.json()["events"][0]
+
+    client.post(
+        "/api/events/ack",
+        json={"results": [{
+            "event_id": ev["id"],
+            "claim_token": ev["claim_token"],
+            "status": "completed",
+            "task_status": "pushed",
+            "commit_sha": "abc123",
+            "session_id": "550e8400-e29b-41d4-a716-446655440000",
+        }]},
+        headers=api_key_headers,
+    )
+
+    get_resp = client.get(f"/api/events/{ev['id']}", headers=api_key_headers)
+    data = get_resp.json()
+    assert data["status"] == "completed"
+    assert data["task_status"] == "pushed"
+    assert data["commit_sha"] == "abc123"
+    assert data["session_id"] == "550e8400-e29b-41d4-a716-446655440000"
+
+
+def test_ack_coalesce_preserves_existing(api_key_headers, client):
+    """Ack NULL values don't overwrite existing commit_sha (COALESCE)."""
+    _ingest(client, _make_issue_payload(11), delivery="ack-coal-001")
+    resp = client.post("/api/events/claim", json={"limit": 1}, headers=api_key_headers)
+    ev = resp.json()["events"][0]
+
+    # First ack with commit_sha
+    client.post(
+        "/api/events/ack",
+        json={"results": [{
+            "event_id": ev["id"],
+            "claim_token": ev["claim_token"],
+            "status": "completed",
+            "commit_sha": "first-sha",
+            "task_status": "pushed",
+        }]},
+        headers=api_key_headers,
+    )
+
+    # Second claim + ack without commit_sha (simulating CI event processed)
+    _ingest(client, _make_issue_payload(99), delivery="ack-coal-002")
+    resp2 = client.post("/api/events/claim", json={"limit": 1}, headers=api_key_headers)
+    ev2 = resp2.json()["events"][0]
+    client.post(
+        "/api/events/ack",
+        json={"results": [{
+            "event_id": ev2["id"],
+            "claim_token": ev2["claim_token"],
+            "status": "completed",
+        }]},
+        headers=api_key_headers,
+    )
+
+    # Original event: commit_sha should still be "first-sha"
+    get_resp = client.get(f"/api/events/{ev['id']}", headers=api_key_headers)
+    assert get_resp.json()["commit_sha"] == "first-sha"
+
+
+def test_ack_without_new_fields(api_key_headers, client):
+    """Ack without new fields → new columns remain NULL, backward compat."""
+    _ingest(client, _make_issue_payload(12), delivery="ack-fwd-001")
+    resp = client.post("/api/events/claim", json={"limit": 1}, headers=api_key_headers)
+    ev = resp.json()["events"][0]
+
+    ack_resp = client.post(
+        "/api/events/ack",
+        json={"results": [{
+            "event_id": ev["id"],
+            "claim_token": ev["claim_token"],
+            "status": "completed",
+        }]},
+        headers=api_key_headers,
+    )
+    assert ack_resp.json()["acked"] == 1
+
+    get_resp = client.get(f"/api/events/{ev['id']}", headers=api_key_headers)
+    data = get_resp.json()
+    assert data["status"] == "completed"
+    # New columns remain None
+    assert data["task_status"] is None
+    assert data["commit_sha"] is None
+    assert data["session_id"] is None
+
+
+def test_ack_with_identity_fields(api_key_headers, client):
+    """Ack with identity_name and target_id → stored."""
+    _ingest(client, _make_issue_payload(13), delivery="ack-id-001")
+    resp = client.post("/api/events/claim", json={"limit": 1}, headers=api_key_headers)
+    ev = resp.json()["events"][0]
+
+    client.post(
+        "/api/events/ack",
+        json={"results": [{
+            "event_id": ev["id"],
+            "claim_token": ev["claim_token"],
+            "status": "completed",
+            "identity_name": "holagent001",
+            "target_id": "claude-code",
+        }]},
+        headers=api_key_headers,
+    )
+
+    get_resp = client.get(f"/api/events/{ev['id']}", headers=api_key_headers)
+    data = get_resp.json()
+    assert data["identity_name"] == "holagent001"
+    assert data["target_id"] == "claude-code"

@@ -57,4 +57,8 @@ def get_connection() -> sqlite3.Connection:
             conn.execute(stmt)
     conn.commit()
 
+    # Apply incremental migrations
+    from app.migrate import run_migrations
+    run_migrations(conn)
+
     return conn
