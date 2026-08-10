@@ -54,9 +54,8 @@ def test_claim_and_ack(api_key_headers, client):
     assert data["remaining"] == 0
 
     ev1, ev2 = data["events"][0], data["events"][1]
-    assert ev1["status"] == "processing"  # not returned, but we need claim_token
-    # Actually claim returns the event data without status field shown
     assert "claim_token" in ev1
+    assert "claim_token" in ev2
 
     # Ack completed
     ack_resp = client.post(

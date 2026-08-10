@@ -120,13 +120,10 @@ def claim_batch(
             SELECT repo_full_name,
                    json_extract(payload, '$.pull_request.number') AS item_number
             FROM events WHERE status = 'processing'
-        )
-        UPDATE events SET
-            status = 'processing',
-            claim_token = ?,
-            claimed_at = datetime('now')
-        WHERE id IN (
-            SELECT c.id FROM candidates c
+        ),
+        filtered AS (
+            SELECT c.*
+            FROM candidates c
             LEFT JOIN busy b
               ON b.repo_full_name = c.repo_full_name
              AND b.item_number IN (
@@ -134,7 +131,25 @@ def claim_batch(
                   json_extract(c.payload, '$.pull_request.number')
              )
             WHERE b.item_number IS NULL
+        ),
+        -- deduplicate within candidates: only take the first per (repo, item_number)
+        dedup AS (
+            SELECT f.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY f.repo_full_name,
+                           COALESCE(
+                               json_extract(f.payload, '$.issue.number'),
+                               json_extract(f.payload, '$.pull_request.number')
+                           )
+                       ORDER BY f.id
+                   ) AS rn
+            FROM filtered f
         )
+        UPDATE events SET
+            status = 'processing',
+            claim_token = ?,
+            claimed_at = datetime('now')
+        WHERE id IN (SELECT id FROM dedup WHERE rn = 1)
         RETURNING id, delivery_id, event_type, repo_full_name, payload,
                   claim_token, received_at
     """

@@ -48,8 +48,11 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
 
-    # idempotent schema init
-    conn.executescript(_load_schema())
+    # Idempotent schema init — execute one statement at a time
+    for stmt in _load_schema().split(";"):
+        stmt = stmt.strip()
+        if stmt and not stmt.startswith("--"):
+            conn.execute(stmt)
     conn.commit()
 
     return conn
