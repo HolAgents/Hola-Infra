@@ -95,6 +95,34 @@ jobs:
           echo "=== ALL SMOKE TESTS PASSED ==="
           kill $UVICORN_PID
 
+  fc-package-check:
+    name: Validate FC package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps into package dir (same as FC deploy)
+        working-directory: fc
+        run: pip install -r requirements.txt -t .
+      - name: Verify uvicorn can boot (cold start simulation)
+        working-directory: fc
+        env:
+          GITHUB_WEBHOOK_SECRET: ci_test_secret
+          API_KEY: ci_test_api_key
+          DB_PATH: /tmp/fc_pkg_test.db
+        run: |
+          PYTHONPATH=. python -c "
+          import uvicorn, fastapi, pydantic, pydantic_settings
+          print('All deps importable: OK')
+          # Simulate import path FC uses
+          import sys; sys.path.insert(0, '.')
+          from fc.main import app
+          print('App imported: OK')
+          print('Routes:', [r.path for r in app.routes if hasattr(r, 'path')])
+          "
+
   validate-config:
     name: Validate s.yaml
     runs-on: ubuntu-latest
@@ -116,7 +144,7 @@ jobs:
   deploy-staging:
     name: Deploy to FC (staging)
     runs-on: ubuntu-latest
-    needs: [test, fc-smoke, validate-config]
+    needs: [test, fc-smoke, fc-package-check, validate-config]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
     permissions:
       id-token: write   # required for OIDC
@@ -160,7 +188,7 @@ jobs:
   deploy-production:
     name: Deploy to FC (production)
     runs-on: ubuntu-latest
-    needs: [test, fc-smoke, validate-config]
+    needs: [test, fc-smoke, fc-package-check, validate-config]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
     permissions:
       id-token: write
