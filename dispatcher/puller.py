@@ -10,6 +10,7 @@ from typing import Any
 from dispatcher.config import get_settings
 from dispatcher.fc_client import FCClient
 from dispatcher.kanban import KanbanClient
+from dispatcher.identity import resolve
 from dispatcher.router import RouteDecision, route
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ def _extract_node_id(event: dict[str, Any]) -> str | None:
     return None
 
 
-def _run_agent(event: dict[str, Any], agent_type: str) -> dict[str, Any]:
+def _run_agent(event: dict[str, Any], agent_type: str, identity: object | None) -> dict[str, Any]:
     """Launch Claude Code as a subprocess to handle the event.
 
     Returns a result dict with ``status`` and ``message``.
@@ -50,12 +51,23 @@ def _run_agent(event: dict[str, Any], agent_type: str) -> dict[str, Any]:
         or ""
     )
 
+    # Identity-driven prompt
+    identity_info = ""
+    if identity:
+        identity_info = (
+            f"Your agent identity:\n"
+            f"  - Agent ID: {identity.agent_id}\n"
+            f"  - Name: {identity.display_name}\n"
+            f"  - GitHub user: {identity.gh_user}\n"
+            f"  - Agent type: {identity.agent_type}\n\n"
+        )
+
     prompt = (
         f"Handle this GitHub event in repo {repo}.\n"
         f"Event: {event_type}\n"
         f"Title: {title}\n"
         f"Body: {body[:2000]}\n\n"  # truncate for context
-        f"Your agent type is: {agent_type}.\n"
+        f"{identity_info}"
         f"Use gh CLI to interact with GitHub as needed."
     )
 
@@ -159,8 +171,13 @@ def run_loop() -> None:
                 if node_id:
                     kanban.move_card(node_id, "In progress")
 
-                # 2. Run agent
-                result = _run_agent(event, decision.agent_type)
+                # 2. Resolve identity from Hola-Switch
+                identity = resolve(decision.agent_type, event.get("repo_full_name", ""))
+                if identity is None:
+                    result = {"status": "failed", "message": f"no identity for {decision.agent_type}"}
+                else:
+                    # 3. Run agent with identity
+                    result = _run_agent(event, decision.agent_type, identity)
 
                 # 3. Kanban → In review (done working) / Done (failed)
                 if node_id:
