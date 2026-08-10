@@ -1,5 +1,7 @@
 """SQLite connection factory — WAL mode, per-request connections."""
 
+from __future__ import annotations
+
 import sqlite3
 import os
 from pathlib import Path

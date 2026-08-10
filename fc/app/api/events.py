@@ -1,5 +1,7 @@
 """POST /api/events/claim, POST /api/events/ack, GET /api/events."""
 
+from __future__ import annotations
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query

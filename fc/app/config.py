@@ -3,6 +3,8 @@
 All configuration is read from environment variables / .env file.
 """
 
+from __future__ import annotations
+
 from pydantic_settings import BaseSettings
 
 
