@@ -54,12 +54,15 @@ class KanbanClient:
     def move_card(self, issue_node_id: str, column: str) -> bool:
         """Move an issue/PR card to a Kanban column by name.
 
-        Returns ``True`` on success; ``False`` when the column is unknown or
-        the GraphQL call fails.
+        Returns ``True`` on success; ``False`` when Kanban is not configured,
+        the column is unknown, or the GraphQL call fails.
         """
+        if not self._project_id or not self._field_id:
+            logger.debug("kanban not configured, skipping move_card")
+            return False
         option_id = self._status_map.get(column)
         if not option_id:
-            logger.error("unknown kanban column: %s", column)
+            logger.warning("unknown kanban column: %s", column)
             return False
 
         variables = {
