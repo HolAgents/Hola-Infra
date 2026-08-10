@@ -92,6 +92,22 @@ def route(event: dict[str, Any]) -> RouteDecision:
             return RouteDecision(True, agent_type="response", reason="mention/command")
         return RouteDecision(False, reason="comment — no mention", skip_ack=True)
 
+    # ---- workflow_run (CI/CD) ----
+    if event_type == "workflow_run":
+        action = payload.get("action", "")
+        conclusion = payload.get("workflow_run", {}).get("conclusion", "")
+        workflow_name = payload.get("workflow_run", {}).get("name", "")
+        if action == "completed" and conclusion == "failure":
+            return RouteDecision(True, agent_type="ci-debug", reason=f"CI failed: {workflow_name}")
+        return RouteDecision(False, reason=f"workflow_run {action}/{conclusion} — ok", skip_ack=True)
+
+    if event_type == "check_run":
+        action = payload.get("action", "")
+        conclusion = payload.get("check_run", {}).get("conclusion", "")
+        if action == "completed" and conclusion == "failure":
+            return RouteDecision(True, agent_type="ci-debug", reason="check run failed")
+        return RouteDecision(False, reason=f"check_run {action} — ok", skip_ack=True)
+
     # ---- fallback ----
     return RouteDecision(False, reason=f"unhandled event type: {event_type}", skip_ack=True)
 
