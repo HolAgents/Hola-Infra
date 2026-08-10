@@ -5,15 +5,15 @@ from pydantic_settings import BaseSettings
 
 class DispatcherSettings(BaseSettings):
     # ---- FC connection ----
-    fc_base_url: str                     # FC HTTP trigger URL
-    api_key: str                         # shared with FC
+    fc_base_url: str = "http://localhost:9000"
+    api_key: str = "change_me"
 
     # ---- polling ----
     poll_interval_seconds: int = 5
     batch_size: int = 20
 
     # ---- GitHub (Kanban + gh CLI) ----
-    github_token: str
+    github_token: str = ""
     github_project_id: str = ""          # ProjectV2 node ID
     github_status_field_id: str = ""     # Status field node ID
     kanban_backlog_id: str = ""

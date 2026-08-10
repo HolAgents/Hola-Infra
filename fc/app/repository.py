@@ -25,25 +25,25 @@ def insert_event(
     payload: dict[str, Any],
     signature: str,
 ) -> dict | None:
-    """Insert a new webhook event (idempotent via delivery_id).
+    """Insert a new webhook event (idempotent via delivery_id UNIQUE index).
 
     Returns the fresh row as a dict, or ``None`` when the delivery_id already
     exists (duplicate).
     """
-    try:
-        cur = conn.execute(
-            """INSERT INTO events (delivery_id, event_type, repo_full_name, payload, signature)
-               VALUES (?, ?, ?, ?, ?)""",
-            (delivery_id, event_type, repo_full_name, json.dumps(payload), signature),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (cur.lastrowid,)
-        ).fetchone()
-        return dict(row) if row else None
-    except Exception:
-        # delivery_id unique constraint violated → duplicate
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO events
+           (delivery_id, event_type, repo_full_name, payload, signature)
+           VALUES (?, ?, ?, ?, ?)""",
+        (delivery_id, event_type, repo_full_name, json.dumps(payload), signature),
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        # delivery_id UNIQUE constraint prevented insert → duplicate
         return None
+    row = conn.execute(
+        "SELECT * FROM events WHERE id = ?", (cur.lastrowid,)
+    ).fetchone()
+    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +114,11 @@ def claim_batch(
         ),
         busy AS (
             SELECT repo_full_name,
-                   json_extract(payload, '$.issue.number') AS issue_number
+                   json_extract(payload, '$.issue.number') AS item_number
             FROM events WHERE status = 'processing'
             UNION
             SELECT repo_full_name,
-                   json_extract(payload, '$.pull_request.number') AS pr_number
+                   json_extract(payload, '$.pull_request.number') AS item_number
             FROM events WHERE status = 'processing'
         )
         UPDATE events SET
@@ -129,13 +129,11 @@ def claim_batch(
             SELECT c.id FROM candidates c
             LEFT JOIN busy b
               ON b.repo_full_name = c.repo_full_name
-             AND (
-                  b.issue_number = json_extract(c.payload, '$.issue.number')
-                  OR
-                  b.pr_number = json_extract(c.payload, '$.pull_request.number')
+             AND b.item_number IN (
+                  json_extract(c.payload, '$.issue.number'),
+                  json_extract(c.payload, '$.pull_request.number')
              )
-            WHERE b.issue_number IS NULL
-              AND b.pr_number IS NULL
+            WHERE b.item_number IS NULL
         )
         RETURNING id, delivery_id, event_type, repo_full_name, payload,
                   claim_token, received_at
