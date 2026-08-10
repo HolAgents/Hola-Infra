@@ -2,10 +2,14 @@
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# Make fc/ importable from repo root (mirrors FC deploy structure)
+sys.path.insert(0, str(Path(__file__).parent.parent / "fc"))
 
 # Override config before any imports that use it
 os.environ["GITHUB_WEBHOOK_SECRET"] = "test_secret"
