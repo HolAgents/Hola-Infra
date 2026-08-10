@@ -118,20 +118,25 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, fc-smoke, validate-config]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
+    permissions:
+      id-token: write   # required for OIDC
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - name: Install Serverless Devs
         run: npm install -g @serverless-devs/s
-      - name: Configure Alibaba Cloud credentials
-        run: |
-          s config add \
-            --access default \
-            --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
-            --AccessKeyID ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }} \
-            --AccessKeySecret ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
+
+      - name: Assume RAM Role via OIDC
+        uses: aliyun-actions/configure-aliyun-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
+          oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
+          region: cn-hangzhou
+
       - name: Deploy to staging
         working-directory: fc
         env:
@@ -144,20 +149,25 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, fc-smoke, validate-config]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - name: Install Serverless Devs
         run: npm install -g @serverless-devs/s
-      - name: Configure Alibaba Cloud credentials
-        run: |
-          s config add \
-            --access default \
-            --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
-            --AccessKeyID ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }} \
-            --AccessKeySecret ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
+
+      - name: Assume RAM Role via OIDC
+        uses: aliyun-actions/configure-aliyun-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
+          oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
+          region: cn-hangzhou
+
       - name: Deploy to production
         working-directory: fc
         env:
