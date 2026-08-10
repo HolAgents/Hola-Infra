@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/fc-webhook-dispatcher]
   pull_request:
     branches: [main]
 
