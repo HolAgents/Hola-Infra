@@ -26,11 +26,19 @@ def insert_event(
     payload: dict[str, Any],
     signature: str,
 ) -> dict | None:
-    """Insert a new webhook event (idempotent via delivery_id UNIQUE index).
+    """Insert a new webhook event (idempotent via delivery_id).
 
     Returns the fresh row as a dict, or ``None`` when the delivery_id already
-    exists (duplicate).
+    exists (duplicate).  Checks the UNIQUE index explicitly, then falls back
+    to IntegrityError for race protection.
     """
+    # Fast path: check for existing delivery_id
+    existing = conn.execute(
+        "SELECT id FROM events WHERE delivery_id = ?", (delivery_id,)
+    ).fetchone()
+    if existing:
+        return None
+
     try:
         cur = conn.execute(
             """INSERT INTO events
@@ -44,7 +52,7 @@ def insert_event(
         ).fetchone()
         return dict(row) if row else None
     except sqlite3.IntegrityError:
-        # delivery_id UNIQUE constraint violated → duplicate
+        # Race: another concurrent request inserted same delivery_id
         return None
 
 
