@@ -24,7 +24,7 @@ services:
         internetAccess: true
       function:
         name: webhook-ingest
-        runtime: custom
+        runtime: python3.10
         codeUri: ./
         customRuntimeConfig:
           command:
