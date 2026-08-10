@@ -137,6 +137,15 @@ jobs:
           oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
           audience: sts.aliyuncs.com
 
+      - name: Configure Serverless Devs access
+        run: |
+          s config add \
+            --access default \
+            --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
+            --AccessKeyID $ALIBABA_CLOUD_ACCESS_KEY_ID \
+            --AccessKeySecret $ALIBABA_CLOUD_ACCESS_KEY_SECRET \
+            --SecurityToken $ALIBABA_CLOUD_SECURITY_TOKEN
+
       - name: Deploy to staging
         working-directory: fc
         env:
@@ -167,6 +176,15 @@ jobs:
           role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
           oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
           audience: sts.aliyuncs.com
+
+      - name: Configure Serverless Devs access
+        run: |
+          s config add \
+            --access default \
+            --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
+            --AccessKeyID $ALIBABA_CLOUD_ACCESS_KEY_ID \
+            --AccessKeySecret $ALIBABA_CLOUD_ACCESS_KEY_SECRET \
+            --SecurityToken $ALIBABA_CLOUD_SECURITY_TOKEN
 
       - name: Deploy to production
         working-directory: fc
