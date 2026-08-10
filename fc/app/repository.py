@@ -7,6 +7,7 @@ argument so that callers control transaction boundaries.
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from typing import Any, Optional
 
@@ -30,20 +31,21 @@ def insert_event(
     Returns the fresh row as a dict, or ``None`` when the delivery_id already
     exists (duplicate).
     """
-    cur = conn.execute(
-        """INSERT OR IGNORE INTO events
-           (delivery_id, event_type, repo_full_name, payload, signature)
-           VALUES (?, ?, ?, ?, ?)""",
-        (delivery_id, event_type, repo_full_name, json.dumps(payload), signature),
-    )
-    conn.commit()
-    if cur.rowcount == 0:
-        # delivery_id UNIQUE constraint prevented insert → duplicate
+    try:
+        cur = conn.execute(
+            """INSERT INTO events
+               (delivery_id, event_type, repo_full_name, payload, signature)
+               VALUES (?, ?, ?, ?, ?)""",
+            (delivery_id, event_type, repo_full_name, json.dumps(payload), signature),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return dict(row) if row else None
+    except sqlite3.IntegrityError:
+        # delivery_id UNIQUE constraint violated → duplicate
         return None
-    row = conn.execute(
-        "SELECT * FROM events WHERE id = ?", (cur.lastrowid,)
-    ).fetchone()
-    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
