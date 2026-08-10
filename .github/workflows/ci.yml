@@ -131,7 +131,7 @@ jobs:
         run: npm install -g @serverless-devs/s
 
       - name: Assume RAM Role via OIDC
-        uses: aliyun-actions/configure-aliyun-credentials@v1
+        uses: aliyun/configure-aliyun-credentials-action@v1
         with:
           role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
           oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
@@ -162,7 +162,7 @@ jobs:
         run: npm install -g @serverless-devs/s
 
       - name: Assume RAM Role via OIDC
-        uses: aliyun-actions/configure-aliyun-credentials@v1
+        uses: aliyun/configure-aliyun-credentials-action@v1
         with:
           role-to-assume: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
           oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
