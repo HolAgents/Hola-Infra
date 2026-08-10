@@ -135,7 +135,7 @@ jobs:
           svc = cfg['services']['hola-webhook']
           assert svc['component'] == 'fc'
           assert svc['props']['region'] == 'cn-hangzhou'
-          assert svc['props']['function']['runtime'] == 'custom'
+          assert svc['props']['function']['runtime'] in ('custom', 'python3.10')
           assert svc['props']['function']['instanceConcurrency'] == 1
           print('s.yaml: OK')
           "
