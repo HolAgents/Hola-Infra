@@ -146,12 +146,16 @@ jobs:
             --AccessKeySecret $ALIBABA_CLOUD_ACCESS_KEY_SECRET \
             --SecurityToken $ALIBABA_CLOUD_SECURITY_TOKEN
 
+      - name: Install Python deps
+        working-directory: fc
+        run: pip install -r requirements.txt -t .
+
       - name: Deploy to staging
         working-directory: fc
         env:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET_STAGING }}
           API_KEY: ${{ secrets.API_KEY_STAGING }}
-        run: s deploy -y --use-local --use-local -t s.staging.yaml
+        run: s deploy -y --use-local -t s.staging.yaml
 
   deploy-production:
     name: Deploy to FC (production)
@@ -185,6 +189,10 @@ jobs:
             --AccessKeyID $ALIBABA_CLOUD_ACCESS_KEY_ID \
             --AccessKeySecret $ALIBABA_CLOUD_ACCESS_KEY_SECRET \
             --SecurityToken $ALIBABA_CLOUD_SECURITY_TOKEN
+
+      - name: Install Python deps
+        working-directory: fc
+        run: pip install -r requirements.txt -t .
 
       - name: Deploy to production
         working-directory: fc
