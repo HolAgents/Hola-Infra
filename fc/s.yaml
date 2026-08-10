@@ -1,0 +1,55 @@
+# -------------------------------------------
+# Hola Infra — FC Webhook Service
+# Serverless Devs (FC 3.0) deployment config
+# -------------------------------------------
+# Usage:
+#   1. s nas init          (once — creates NAS + VPC)
+#   2. s deploy            (push code + trigger)
+#   3. Register the HTTP trigger URL as GitHub org webhook
+# -------------------------------------------
+
+edition: 1.0.0
+name: hola-webhook-fc
+access: "default"
+
+services:
+  hola-webhook:
+    component: fc
+    props:
+      region: cn-hangzhou
+      service:
+        name: hola-webhook-service
+        description: GitHub webhook receiver with SQLite on NAS
+        nasConfig: auto
+        internetAccess: true
+      function:
+        name: webhook-ingest
+        runtime: custom
+        codeUri: ./
+        customRuntimeConfig:
+          command:
+            - python3
+            - -m
+            - uvicorn
+            - fc.main:app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "9000"
+        memorySize: 256
+        timeout: 30
+        instanceConcurrency: 1
+        environmentVariables:
+          GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
+          API_KEY: ${env.API_KEY}
+          DB_PATH: /mnt/nas/events.db
+          LOG_LEVEL: INFO
+      triggers:
+        - type: http
+          name: webhook-http
+          qualifier: LATEST
+          triggerConfig:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
