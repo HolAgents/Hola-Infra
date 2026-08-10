@@ -4,6 +4,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from fc.app.db import get_connection
 from fc.app.models import IngestResponse
@@ -69,10 +70,16 @@ async def github_webhook(request: Request):
         return IngestResponse(status="filtered", delivery_id=result["delivery_id"])
 
     if result["status"] == "duplicate":
-        return IngestResponse(status="duplicate", delivery_id=result["delivery_id"])
+        return JSONResponse(
+            status_code=200,
+            content=IngestResponse(status="duplicate", delivery_id=result["delivery_id"]).model_dump(),
+        )
 
-    return IngestResponse(
-        status="accepted",
-        delivery_id=result["delivery_id"],
-        event_id=result["event_id"],
+    return JSONResponse(
+        status_code=201,
+        content=IngestResponse(
+            status="accepted",
+            delivery_id=result["delivery_id"],
+            event_id=result["event_id"],
+        ).model_dump(),
     )

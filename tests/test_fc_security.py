@@ -25,7 +25,7 @@ def _make_headers(body: bytes, event: str = "issues", delivery: str = "aaa-111")
 def test_valid_webhook(client, sample_issue_opened):
     body = json.dumps(sample_issue_opened).encode()
     resp = client.post("/api/webhooks/github", content=body, headers=_make_headers(body))
-    assert resp.status_code == 202
+    assert resp.status_code == 201
     assert resp.json()["status"] == "accepted"
 
 

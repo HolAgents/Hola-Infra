@@ -27,7 +27,7 @@ def _post(client, payload: dict, delivery: str = "aaa-111", event: str = "issues
 def test_store_and_query(client, sample_issue_opened, api_key_headers):
     # Ingest
     resp = _post(client, sample_issue_opened, delivery="ingest-001")
-    assert resp.status_code == 202
+    assert resp.status_code == 201
     data = resp.json()
     assert data["status"] == "accepted"
     assert data["event_id"] == 1
@@ -45,7 +45,7 @@ def test_store_and_query(client, sample_issue_opened, api_key_headers):
 def test_duplicate_delivery(client, sample_issue_opened):
     # First ingest
     resp1 = _post(client, sample_issue_opened, delivery="dup-001")
-    assert resp1.status_code == 202
+    assert resp1.status_code == 201
 
     # Second ingest (same delivery_id) — should be idempotent
     resp2 = _post(client, sample_issue_opened, delivery="dup-001")
