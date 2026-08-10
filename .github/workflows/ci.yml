@@ -1,0 +1,153 @@
+name: CI — FC Webhook + Dispatcher
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'fc/**'
+      - 'dispatcher/**'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'fc/**'
+      - 'dispatcher/**'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  # ------------------------------------------------------------------
+  # Unit tests — fc + dispatcher
+  # ------------------------------------------------------------------
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install fc dependencies
+        run: pip install -r fc/requirements.txt
+
+      - name: Install dispatcher + test dependencies
+        run: pip install -r dispatcher/requirements.txt pytest
+
+      - name: Run tests
+        env:
+          GITHUB_WEBHOOK_SECRET: ci_test_secret
+          API_KEY: ci_test_api_key
+          DB_PATH: ./data/ci_test.db
+        run: python -m pytest tests/ -v --tb=short
+
+  # ------------------------------------------------------------------
+  # FC deployability check — fast smoke test
+  # ------------------------------------------------------------------
+  fc-smoke:
+    name: FC deployability smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install fc dependencies
+        run: pip install -r fc/requirements.txt httpx
+
+      - name: Smoke — app starts & serves /healthz
+        env:
+          GITHUB_WEBHOOK_SECRET: ci_test_secret
+          API_KEY: ci_test_api_key
+          DB_PATH: /tmp/ci_smoke.db
+        run: |
+          # Start uvicorn in background
+          python -m uvicorn fc.main:app --host 0.0.0.0 --port 9876 &
+          UVICORN_PID=$!
+
+          # Wait for startup
+          sleep 3
+
+          # --- healthz ---
+          echo "=== healthz ==="
+          curl -sf http://localhost:9876/healthz | python -m json.tool
+
+          # --- full ingest → claim → ack flow ---
+          echo "=== webhook ingest ==="
+          PAYLOAD='{"action":"opened","issue":{"number":1,"node_id":"I_1","title":"test"},"repository":{"full_name":"HolAgents/test"},"sender":{"login":"test-user"}}'
+          SIGNATURE=$(python -c "
+          import hashlib, hmac
+          secret = b'ci_test_secret'
+          body = '''$PAYLOAD'''.encode()
+          print('sha256=' + hmac.new(secret, body, hashlib.sha256).hexdigest())
+          ")
+
+          curl -sf -X POST http://localhost:9876/api/webhooks/github \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: issues" \
+            -H "X-GitHub-Delivery: ci-test-001" \
+            -H "X-Hub-Signature-256: $SIGNATURE" \
+            -d "$PAYLOAD" | python -m json.tool
+
+          echo "=== claim ==="
+          CLAIM=$(curl -sf -X POST http://localhost:9876/api/events/claim \
+            -H "X-API-Key: ci_test_api_key" \
+            -H "Content-Type: application/json" \
+            -d '{"limit":10}')
+          echo "$CLAIM" | python -m json.tool
+
+          EVENT_ID=$(echo "$CLAIM" | python -c "import sys,json; print(json.load(sys.stdin)['events'][0]['id'])")
+          CLAIM_TOKEN=$(echo "$CLAIM" | python -c "import sys,json; print(json.load(sys.stdin)['events'][0]['claim_token'])")
+
+          echo "=== ack ==="
+          curl -sf -X POST http://localhost:9876/api/events/ack \
+            -H "X-API-Key: ci_test_api_key" \
+            -H "Content-Type: application/json" \
+            -d "{\"results\":[{\"event_id\":$EVENT_ID,\"claim_token\":\"$CLAIM_TOKEN\",\"status\":\"completed\"}]}" \
+            | python -m json.tool
+
+          echo "=== verify ==="
+          curl -sf http://localhost:9876/api/events/$EVENT_ID \
+            -H "X-API-Key: ci_test_api_key" \
+            | python -m json.tool
+
+          echo ""
+          echo "=== ALL SMOKE TESTS PASSED ==="
+
+          # Cleanup
+          kill $UVICORN_PID
+
+  # ------------------------------------------------------------------
+  # s.yaml validation (basic structural check)
+  # ------------------------------------------------------------------
+  validate-config:
+    name: Validate s.yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check s.yaml is valid YAML
+        run: python -c "import yaml; yaml.safe_load(open('fc/s.yaml')); print('s.yaml: OK')"
+
+      - name: Check key fields present
+        run: |
+          python -c "
+          import yaml
+          cfg = yaml.safe_load(open('fc/s.yaml'))
+          svc = cfg['services']['hola-webhook']
+          assert svc['component'] == 'fc'
+          assert svc['props']['region'] == 'cn-hangzhou'
+          assert svc['props']['function']['runtime'] == 'custom'
+          assert svc['props']['function']['instanceConcurrency'] == 1
+          print('s.yaml structural check: OK')
+          "
