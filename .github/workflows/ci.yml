@@ -113,11 +113,9 @@ jobs:
           API_KEY: ci_test_api_key
           DB_PATH: /tmp/fc_pkg_test.db
         run: |
-          PYTHONPATH=. python -c "
+          PYTHONPATH="..:$PYTHONPATH" python -c "
           import uvicorn, fastapi, pydantic, pydantic_settings
           print('All deps importable: OK')
-          # Simulate import path FC uses
-          import sys; sys.path.insert(0, '.')
           from fc.main import app
           print('App imported: OK')
           print('Routes:', [r.path for r in app.routes if hasattr(r, 'path')])
