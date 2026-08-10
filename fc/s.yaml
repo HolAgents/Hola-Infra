@@ -26,16 +26,6 @@ services:
         name: webhook-ingest
         runtime: python3.10
         codeUri: ./
-        customRuntimeConfig:
-          command:
-            - python3
-            - -m
-            - uvicorn
-            - main:app
-            - --host
-            - "0.0.0.0"
-            - --port
-            - "9000"
         memorySize: 256
         timeout: 30
         instanceConcurrency: 1
