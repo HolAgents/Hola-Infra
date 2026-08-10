@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deploy target'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
 
 jobs:
   test:
@@ -104,21 +113,18 @@ jobs:
           print('s.yaml: OK')
           "
 
-  deploy:
-    name: Deploy to Alibaba Cloud FC
+  deploy-staging:
+    name: Deploy to FC (staging)
     runs-on: ubuntu-latest
     needs: [test, fc-smoke, validate-config]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
       - name: Install Serverless Devs
         run: npm install -g @serverless-devs/s
-
       - name: Configure Alibaba Cloud credentials
         run: |
           s config add \
@@ -126,8 +132,33 @@ jobs:
             --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
             --AccessKeyID ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }} \
             --AccessKeySecret ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
+      - name: Deploy to staging
+        working-directory: fc
+        env:
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET_STAGING }}
+          API_KEY: ${{ secrets.API_KEY_STAGING }}
+        run: s deploy -y -t s.staging.yaml
 
-      - name: Deploy to FC
+  deploy-production:
+    name: Deploy to FC (production)
+    runs-on: ubuntu-latest
+    needs: [test, fc-smoke, validate-config]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Serverless Devs
+        run: npm install -g @serverless-devs/s
+      - name: Configure Alibaba Cloud credentials
+        run: |
+          s config add \
+            --access default \
+            --AccountID ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }} \
+            --AccessKeyID ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }} \
+            --AccessKeySecret ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
+      - name: Deploy to production
         working-directory: fc
         env:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
