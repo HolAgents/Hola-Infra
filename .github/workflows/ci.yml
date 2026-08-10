@@ -140,7 +140,7 @@ jobs:
       - name: Deploy to staging
         working-directory: fc
         env:
-          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET_STAGING }}
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET_STAGING }}
           API_KEY: ${{ secrets.API_KEY_STAGING }}
         run: s deploy -y -t s.staging.yaml
 
@@ -171,6 +171,6 @@ jobs:
       - name: Deploy to production
         working-directory: fc
         env:
-          GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           API_KEY: ${{ secrets.API_KEY }}
         run: s deploy -y
