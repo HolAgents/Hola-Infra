@@ -24,6 +24,14 @@ mutation MoveCard($project: ID!, $item: ID!, $field: ID!, $value: String!) {
 }
 """
 
+ADD_ITEM = """
+mutation AddItem($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: {projectId: $project, contentId: $content}) {
+    item { id }
+  }
+}
+"""
+
 
 class KanbanClient:
     """Move issues/PRs between ProjectV2 Kanban columns."""
@@ -64,6 +72,27 @@ class KanbanClient:
         if not option_id:
             logger.warning("unknown kanban column: %s", column)
             return False
+
+        # Ensure the item is in the project first (idempotent — returns the
+        # existing item if already added). Covers items outside the template's
+        # auto-add workflow scope.
+        try:
+            resp = self._client.post(
+                "/graphql",
+                json={
+                    "query": ADD_ITEM,
+                    "variables": {
+                        "project": self._project_id,
+                        "content": issue_node_id,
+                    },
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "errors" in data:
+                logger.debug("add item skipped: %s", data["errors"])
+        except Exception as exc:
+            logger.error("add item failed: %s", exc)
 
         variables = {
             "project": self._project_id,
@@ -245,6 +274,52 @@ def init_project(org_name: str, project_title: str, token: str) -> dict:
 
     client.close()
     return result
+
+
+def fetch_project_config(project_id: str, token: str) -> dict[str, str]:
+    """Read config IDs from an existing ProjectV2 (e.g. one created with
+    GitHub's 5-column Kanban template) — no creation, no column edits.
+
+    Returns a dict ready to paste into ``dispatcher/.env``, with empty
+    values for any of the expected columns missing on the project.
+    """
+    client = httpx.Client(
+        base_url="https://api.github.com",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        timeout=30,
+    )
+
+    def gql(query: str, variables: dict) -> dict:
+        resp = client.post("/graphql", json={"query": query, "variables": variables})
+        resp.raise_for_status()
+        data = resp.json()
+        if "errors" in data:
+            raise RuntimeError(f"GraphQL error: {data['errors']}")
+        return data["data"]
+
+    try:
+        data = gql(GET_STATUS_FIELD, {"project": project_id})
+        fields = data["node"]["fields"]["nodes"]
+        status_field = next((f for f in fields if f.get("name") == "Status"), None)
+        if not status_field:
+            raise RuntimeError("Status field not found on project")
+
+        options = {o["name"]: o["id"] for o in status_field.get("options", [])}
+        print(f"Status field ID: {status_field['id']}")
+        print(f"Existing options: {sorted(options.keys())}")
+
+        result: dict[str, str] = {
+            "github_project_id": project_id,
+            "github_status_field_id": status_field["id"],
+        }
+        for name, _ in STATUS_COLUMNS:
+            result[f"kanban_{_slug(name)}"] = options.get(name, "")
+        return result
+    finally:
+        client.close()
 
 
 def _slug(name: str) -> str:
