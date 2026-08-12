@@ -32,7 +32,10 @@ services:
         environmentVariables:
           GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
           API_KEY: ${env.API_KEY}
-          DB_PATH: /mnt/nas/events.db
+          # FC3 nasConfig:auto mounts the NAS at /mnt/auto (NOT /mnt/nas).
+          # /mnt/nas was ephemeral instance storage — data vanished on
+          # every cold start.
+          DB_PATH: /mnt/auto/events.db
           LOG_LEVEL: INFO
       triggers:
         - type: http
