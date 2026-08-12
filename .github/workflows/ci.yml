@@ -129,7 +129,7 @@ jobs:
           "
 
   validate-config:
-    name: Validate s.yaml
+    name: Validate s.yaml configs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,13 +137,14 @@ jobs:
         run: |
           python -c "
           import yaml
-          cfg = yaml.safe_load(open('fc/s.yaml'))
-          svc = cfg['services']['hola-webhook']
-          assert svc['component'] == 'fc'
-          assert svc['props']['region'] == 'cn-hangzhou'
-          assert svc['props']['function']['runtime'] in ('custom', 'python3.10')
-          assert svc['props']['function']['instanceConcurrency'] == 1
-          print('s.yaml: OK')
+          for path in ('fc/s.yaml', 'fc/s.staging.yaml'):
+              cfg = yaml.safe_load(open(path))
+              svc = cfg['services']['hola-webhook']
+              assert svc['component'] == 'fc'
+              assert svc['props']['region'] == 'cn-hangzhou'
+              assert svc['props']['function']['runtime'] in ('custom', 'python3.10')
+              assert svc['props']['function']['instanceConcurrency'] == 1
+              print(f'{path}: OK')
           "
 
   deploy-staging:
