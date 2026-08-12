@@ -38,12 +38,44 @@ def _execute_with_lock_retry(conn: sqlite3.Connection, sql: str, retries: int = 
             conn.execute(sql)
             return
         except sqlite3.OperationalError as exc:
-            msg = str(exc).lower()
-            if "locked" not in msg and "busy" not in msg:
+            if not _is_transient(exc):
                 raise
             if attempt == retries - 1:
                 raise
             time.sleep(0.2 * (attempt + 1))
+
+
+def _is_transient(exc: sqlite3.OperationalError) -> bool:
+    """True for lock contention and NAS-induced transient I/O failures.
+
+    Concurrent writers across FC instances hit random ``database is
+    locked`` and ``disk I/O error`` on the NAS-backed DB (Hola-Infra#29,
+    #32); both are transient and retryable.
+    """
+    msg = str(exc).lower()
+    return any(k in msg for k in ("locked", "busy", "disk i/o", "i/o error"))
+
+
+def run_with_db_retry(fn, attempts: int = 5):
+    """Run ``fn(conn)`` with a fresh connection per attempt, retrying
+    transient SQLite errors (lock contention / NAS disk I/O).
+
+    The wrapped operations must be idempotent — claim/ack verify
+    claim_tokens and ingest dedups by delivery_id, so retries are safe.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        conn = get_connection()
+        try:
+            return fn(conn)
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if not _is_transient(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+        finally:
+            conn.close()
+    raise last_exc  # pragma: no cover — loop always raises or returns
 
 
 def get_connection() -> sqlite3.Connection:

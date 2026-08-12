@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from app.db import get_connection
+from app.db import get_connection, run_with_db_retry
 from app.models import IngestResponse
 from app.security import validate_webhook_headers, verify_github_signature
 from app.services.ingest import handle_webhook
@@ -53,9 +53,8 @@ async def github_webhook(request: Request):
     # Extract repo
     repo = payload.get("repository", {}).get("full_name", "")
 
-    conn = get_connection()
-    try:
-        result = handle_webhook(
+    result = run_with_db_retry(
+        lambda conn: handle_webhook(
             conn,
             delivery_id=headers["delivery_id"],
             event_type=headers["event"],
@@ -63,8 +62,7 @@ async def github_webhook(request: Request):
             payload=payload,
             signature=headers["signature"] or "",
         )
-    finally:
-        conn.close()
+    )
 
     if result["status"] == "filtered":
         return IngestResponse(status="filtered", delivery_id=result["delivery_id"])
