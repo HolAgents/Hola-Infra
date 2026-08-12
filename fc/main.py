@@ -10,7 +10,7 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api import webhooks, events, health
+from app.api import admin, webhooks, events, health
 from app.config import get_settings
 
 settings = get_settings()
@@ -30,6 +30,7 @@ app = FastAPI(
 app.include_router(webhooks.router)
 app.include_router(events.router)
 app.include_router(health.router)
+app.include_router(admin.router)
 
 
 # ---------------------------------------------------------------------------
