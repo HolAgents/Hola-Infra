@@ -1,9 +1,9 @@
-"""SQLite connection factory — WAL mode, per-request connections."""
+"""SQLite connection factory — rollback journal, per-request connections."""
 
 from __future__ import annotations
 
 import sqlite3
-import os
+import time
 from pathlib import Path
 
 from app.config import get_settings
@@ -27,13 +27,34 @@ def _ensure_db_dir(db_path: str) -> None:
         parent.mkdir(parents=True, exist_ok=True)
 
 
+def _execute_with_lock_retry(conn: sqlite3.Connection, sql: str, retries: int = 5) -> None:
+    """Execute a statement, retrying on transient lock contention.
+
+    Multiple FC instances share the NAS-backed DB; concurrent cold starts
+    can briefly contend on the write lock (see Hola-Infra#29).
+    """
+    for attempt in range(retries):
+        try:
+            conn.execute(sql)
+            return
+        except sqlite3.OperationalError as exc:
+            msg = str(exc).lower()
+            if "locked" not in msg and "busy" not in msg:
+                raise
+            if attempt == retries - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+
+
 def get_connection() -> sqlite3.Connection:
     """Return a new, initialised SQLite connection for the current request.
 
     Per-connection PRAGMAs:
-        - WAL journal mode (writers don't block readers on NAS)
+        - journal_mode=DELETE (rollback journal) — WAL's fcntl locking is
+          unreliable over NAS/NFS and concurrent writers across instances
+          hit random "database is locked" errors (Hola-Infra#29)
         - synchronous=NORMAL (acceptable crash window; webhooks are redeliverable)
-        - 5-second busy_timeout (wait out transient NAS lock contention)
+        - 5-second busy_timeout (wait out transient lock contention)
         - row_factory = sqlite3.Row (dict-like access)
     """
     settings = get_settings()
@@ -45,7 +66,7 @@ def get_connection() -> sqlite3.Connection:
         check_same_thread=False,    # each request gets its own connection
     )
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -54,7 +75,7 @@ def get_connection() -> sqlite3.Connection:
     for stmt in _load_schema().split(";"):
         stmt = stmt.strip()
         if stmt and not stmt.startswith("--"):
-            conn.execute(stmt)
+            _execute_with_lock_retry(conn, stmt)
     conn.commit()
 
     # Apply incremental migrations
