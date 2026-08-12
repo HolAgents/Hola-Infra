@@ -77,4 +77,7 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - `fc-package-check` — pip install `-t .` + import check (catches missing deps before deploy)
 - Deploy jobs — OIDC → STS → `s deploy`, manual trigger only
 
+`.github/workflows/ocr-review.yml`:
+- `code-review` — OpenCodeReview (`alibaba/open-code-review`) posts AI inline review comments + a sticky summary on PRs; re-triggerable with a `/open-code-review` comment. Requires `OCR_LLM_URL` / `OCR_LLM_AUTH_TOKEN` secrets and `OCR_LLM_MODEL` / `OCR_LLM_USE_ANTHROPIC` vars.
+
 Deploy uses OIDC (no long-lived AccessKeys). RAM role `fc-github-action` trusts IdP `action`.
