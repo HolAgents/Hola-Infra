@@ -1,0 +1,43 @@
+# -------------------------------------------
+# Hola Infra — FC Webhook Service (STAGING)
+# -------------------------------------------
+# Separate staging environment: own service/function names, own NAS,
+# own HTTP trigger. Deployed via `s deploy -y --use-local -t s.staging.yaml`
+# with staging secrets injected by the CI deploy-staging job.
+# -------------------------------------------
+
+edition: 1.0.0
+name: hola-webhook-fc-staging
+access: "default"
+
+services:
+  hola-webhook:
+    component: fc
+    props:
+      region: cn-hangzhou
+      service:
+        name: hola-webhook-service-staging
+        description: GitHub webhook receiver (staging) with SQLite on NAS
+        nasConfig: auto
+        internetAccess: true
+      function:
+        name: webhook-ingest-staging
+        runtime: python3.10
+        codeUri: ./
+        memorySize: 256
+        timeout: 30
+        instanceConcurrency: 1
+        environmentVariables:
+          GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
+          API_KEY: ${env.API_KEY}
+          DB_PATH: /mnt/nas/events.db
+          LOG_LEVEL: INFO
+      triggers:
+        - type: http
+          name: webhook-http
+          qualifier: LATEST
+          config:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
