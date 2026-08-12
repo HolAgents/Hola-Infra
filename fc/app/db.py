@@ -98,7 +98,10 @@ def get_connection() -> sqlite3.Connection:
         check_same_thread=False,    # each request gets its own connection
     )
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=DELETE")
+    # No journal_mode PRAGMA here: fresh databases use SQLite's default
+    # (rollback journal) automatically, and converting a live database's
+    # journal mode under concurrent traffic corrupted the NAS-backed file
+    # (Hola-Infra#34).
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
