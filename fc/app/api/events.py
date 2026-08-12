@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.db import get_connection
+from app.db import get_connection, run_with_db_retry
 from app.models import (
     AckRequest,
     AckResponse,
@@ -34,22 +34,18 @@ def claim(body: ClaimRequest):
     Events whose repo + issue/PR number already has a ``processing`` event are
     automatically skipped.
     """
-    conn = get_connection()
-    try:
-        result = do_claim(conn, limit=body.limit, event_types=body.event_types)
-    finally:
-        conn.close()
+    result = run_with_db_retry(
+        lambda conn: do_claim(conn, limit=body.limit, event_types=body.event_types)
+    )
     return ClaimResponse(**result)
 
 
 @router.post("/ack", response_model=AckResponse, summary="Acknowledge processed events")
 def ack(body: AckRequest):
     """Report results for claimed events. Requires matching ``claim_token``."""
-    conn = get_connection()
-    try:
-        result = do_ack(conn, [r.model_dump() for r in body.results])
-    finally:
-        conn.close()
+    result = run_with_db_retry(
+        lambda conn: do_ack(conn, [r.model_dump() for r in body.results])
+    )
     return AckResponse(**result)
 
 
