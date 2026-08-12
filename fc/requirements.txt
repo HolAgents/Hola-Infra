@@ -2,3 +2,7 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
+# Pinned explicitly: anyio only depends on exceptiongroup when python<3.11
+# (marker-gated), but the FC runtime is python3.10. Any build done under a
+# newer interpreter (3.11/3.12) would silently skip it and break cold start.
+exceptiongroup>=1.0.2

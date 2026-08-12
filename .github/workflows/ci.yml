@@ -103,7 +103,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Must match the FC runtime (python3.10): pip evaluates dependency
+          # markers against this version, so building under 3.12 silently
+          # drops py<3.11 deps (exceptiongroup) and cp310 wheels.
+          python-version: "3.10"
       - name: Install deps into package dir (same as FC deploy)
         working-directory: fc
         run: pip install -r requirements.txt -t .
@@ -117,6 +120,9 @@ jobs:
           PYTHONPATH="..:$PYTHONPATH" python -c "
           import uvicorn, fastapi, pydantic, pydantic_settings
           print('All deps importable: OK')
+          # Runtime-only deps that used to slip through 3.12 builds:
+          import exceptiongroup, anyio, pydantic_core
+          print('Runtime deps (exceptiongroup, anyio, pydantic_core): OK')
           from fc.main import app
           print('App imported: OK')
           print('Routes:', [r.path for r in app.routes if hasattr(r, 'path')])
@@ -150,6 +156,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # FC runtime is python3.10 — build the package with matching
+          # dependency markers/wheels (see fc-package-check).
+          python-version: "3.10"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -194,6 +205,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # FC runtime is python3.10 — build the package with matching
+          # dependency markers/wheels (see fc-package-check).
+          python-version: "3.10"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
