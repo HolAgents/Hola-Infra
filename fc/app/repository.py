@@ -115,7 +115,7 @@ def claim_batch(
     params.append(limit)
     params.append(claim_token)
 
-    sql = f"""\
+    update_sql = f"""\
         WITH candidates AS (
             SELECT * FROM events
             WHERE status = 'received' {type_clause}
@@ -160,11 +160,22 @@ def claim_batch(
             claim_token = ?,
             claimed_at = datetime('now')
         WHERE id IN (SELECT id FROM dedup WHERE rn = 1)
-        RETURNING id, delivery_id, event_type, repo_full_name, payload,
-                  claim_token, received_at
+          AND status = 'received'
     """
-    with conn:  # BEGIN IMMEDIATE
-        rows = conn.execute(sql, params).fetchall()
+    # No RETURNING here: it needs SQLite >= 3.35, but the FC python3.10
+    # runtime image ships an older SQLite. Select the rows back by the
+    # fresh per-batch claim_token instead — the token is unique per call,
+    # so it can only match rows this call just claimed.
+    select_sql = """\
+        SELECT id, delivery_id, event_type, repo_full_name, payload,
+               claim_token, received_at
+        FROM events
+        WHERE claim_token = ? AND status = 'processing'
+        ORDER BY id
+    """
+    with conn:  # single transaction: the UPDATE holds the write lock until commit
+        conn.execute(update_sql, params)
+        rows = conn.execute(select_sql, (claim_token,)).fetchall()
 
     claimed = []
     for r in rows:
