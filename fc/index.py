@@ -1,12 +1,17 @@
-"""FC Python 3.10 runtime ASGI entry point.
+"""FC Python 3.10 runtime entry point.
 
-The FC Python runtime passes HTTP requests to this handler as ASGI.
-FastAPI's ``app`` is already an ASGI application, so we just forward.
+The official FC Python runtime invokes HTTP triggers as WSGI
+(``environ, start_response``), while FastAPI's ``app`` is ASGI
+(``__call__(scope, receive, send)``). ``a2wsgi`` bridges the two:
+it adapts the ASGI app into the WSGI callable the runtime expects.
 """
+
+from a2wsgi import ASGIMiddleware
 
 from main import app
 
 
-# FC Python 3.10 runtime looks for a callable named ``handler``.
-# It wraps HTTP trigger requests as ASGI (scope, receive, send).
-handler = app
+# FC Python 3.10 runtime looks for a callable named ``handler``
+# and calls it with WSGI semantics for HTTP triggers. a2wsgi's
+# ASGIMiddleware adapts an ASGI app (FastAPI) into a WSGI app.
+handler = ASGIMiddleware(app)

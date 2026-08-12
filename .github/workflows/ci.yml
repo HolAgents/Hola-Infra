@@ -121,8 +121,8 @@ jobs:
           import uvicorn, fastapi, pydantic, pydantic_settings
           print('All deps importable: OK')
           # Runtime-only deps that used to slip through 3.12 builds:
-          import exceptiongroup, anyio, pydantic_core
-          print('Runtime deps (exceptiongroup, anyio, pydantic_core): OK')
+          import exceptiongroup, anyio, pydantic_core, a2wsgi
+          print('Runtime deps (exceptiongroup, anyio, pydantic_core, a2wsgi): OK')
           from fc.main import app
           print('App imported: OK')
           print('Routes:', [r.path for r in app.routes if hasattr(r, 'path')])
