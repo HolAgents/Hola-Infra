@@ -17,9 +17,34 @@ say() { echo "== $* =="; }
 
 say "Discover VPC from NAS file systems"
 NAS=$(aliyun nas DescribeFileSystems --region "$REGION")
-echo "$NAS" | jq -r '.. | objects | select(has("VpcId")) | "fs=\(.FileSystemId // "-") vpc=\(.VpcId) vsw=\(.VSwitchId // "-") desc=\(.Description // "-")"' | sort -u
-VPC_ID=$(echo "$NAS" | jq -r '[.. | objects | select(.VpcId? != null and .VpcId? != "")][0].VpcId')
-test -n "$VPC_ID" || { echo "FATAL: no VPC found on any NAS file system"; exit 1; }
+# Each file system object nests its mount targets (which carry VpcId).
+# Print the fs↔vpc mapping, then prefer the FC deploy component's
+# default NAS ("DefaultNas" in the description).
+echo "$NAS" | jq -r '
+  .. | objects | select(has("FileSystemId") and has("MountTargets"))
+  | . as $fs
+  | ($fs.MountTargets.MountTarget[]? // {}) as $mt
+  | "fs=\($fs.FileSystemId) vpc=\($mt.VpcId // "-") vsw=\($mt.VSwitchId // "-") desc=\($fs.Description // "-")"' | sort -u
+
+FC_FS_ID=$(echo "$NAS" | jq -r '
+  .. | objects | select(.FileSystemId? != null and (.Description? // "" | contains("DefaultNas")))
+  | .FileSystemId' | head -1)
+if [ -n "$FC_FS_ID" ]; then
+  VPC_ID=$(echo "$NAS" | jq -r --arg fs "$FC_FS_ID" '
+    .. | objects | select(.FileSystemId? == $fs)
+    | .MountTargets.MountTarget[]?.VpcId // empty' | head -1)
+else
+  VPC_ID=""
+fi
+
+# Cross-check with the FC API when the CLI supports it (best-effort).
+FC_API_VPC=$(aliyun fc3 DescribeService --region "$REGION" --ServiceName hola-webhook-service 2>/dev/null | jq -r '.. | objects | .VpcId? // empty' | head -1 || true)
+echo "fc-api vpc: ${FC_API_VPC:-unavailable}"
+if [ -n "$FC_API_VPC" ] && [ "$FC_API_VPC" != "null" ]; then
+  VPC_ID="$FC_API_VPC"
+fi
+
+test -n "$VPC_ID" || { echo "FATAL: could not determine the FC service VPC"; exit 1; }
 say "Using VPC: $VPC_ID"
 
 VPC=$(aliyun vpc DescribeVpcs --region "$REGION" --VpcId "$VPC_ID")
