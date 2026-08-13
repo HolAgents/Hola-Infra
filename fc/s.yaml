@@ -32,6 +32,9 @@ services:
         environmentVariables:
           GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
           API_KEY: ${env.API_KEY}
+          # PostgreSQL backend (PolarDB Serverless) — when unset, the
+          # SQLite fallback at DB_PATH is used instead.
+          DATABASE_URL: ${env.DATABASE_URL}
           # FC3 nasConfig:auto mounts the NAS at /mnt/auto (NOT /mnt/nas).
           # /mnt/nas was ephemeral instance storage — data vanished on
           # every cold start.

@@ -9,3 +9,6 @@ exceptiongroup>=1.0.2
 # FC python3.10 runtime invokes HTTP handlers as WSGI; index.py adapts the
 # ASGI FastAPI app via a2wsgi.
 a2wsgi>=1.7.0
+# PostgreSQL backend (PolarDB Serverless) — optional at runtime; the
+# SQLite backend remains for local dev when DATABASE_URL is unset.
+psycopg2-binary>=2.9.9
