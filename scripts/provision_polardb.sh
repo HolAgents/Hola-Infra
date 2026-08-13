@@ -65,15 +65,36 @@ if [ -z "$CLUSTER_ID" ]; then
   PW=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
   echo "::add-mask::$PW"
   echo "$PW" > /tmp/hola_db_pw
-  # ZoneId omitted: VSwitchId implies the zone and the service picks a
-  # serverless-capable one (InvalidZoneID.NotFound otherwise).
-  aliyun polardb CreateDBCluster --region "$REGION" \
-    --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
-    --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
-    --ScaleRoNumMin 1 --ScaleRoNumMax 1 \
-    --DBNodeClass polar.pg.sl.small \
-    --DBClusterDescription "$CLUSTER_DESC" \
-    --VPCId "$VPC_ID" --VSwitchId "$VSW_ID"
+  # PolarDB Serverless PG is not available in every zone — iterate over
+  # the account's zones, creating a VSwitch per zone, until one accepts
+  # the cluster. (Cross-zone VPC routing keeps the FC function able to
+  # reach the internal endpoint regardless.)
+  N=1
+  DB_VSW_ID=""
+  DB_ZONE=""
+  for Z in $(aliyun ecs DescribeZones --region "$REGION" | jq -r '.. | objects | .ZoneId? // empty' | sort -u); do
+    ZVSW=$(aliyun vpc DescribeVSwitches --region "$REGION" --VpcId "$VPC_ID" --ZoneId "$Z" | jqv '.. | objects | .VSwitchId? // empty')
+    if [ -z "$ZVSW" ]; then
+      aliyun vpc CreateVSwitch --region "$REGION" --VpcId "$VPC_ID" --ZoneId "$Z" \
+        --CidrBlock "10.10.$N.0/24" --VSwitchName "${VSW_NAME}-$Z" >/dev/null 2>&1 || { N=$((N+1)); continue; }
+      ZVSW=$(aliyun vpc DescribeVSwitches --region "$REGION" --VpcId "$VPC_ID" --ZoneId "$Z" | jqv '.. | objects | .VSwitchId? // empty')
+    fi
+    echo "trying zone $Z (vswitch $ZVSW)"
+    if aliyun polardb CreateDBCluster --region "$REGION" \
+        --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
+        --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
+        --ScaleRoNumMin 1 --ScaleRoNumMax 1 \
+        --DBNodeClass polar.pg.sl.small \
+        --DBClusterDescription "$CLUSTER_DESC" \
+        --VPCId "$VPC_ID" --VSwitchId "$ZVSW" >/dev/null 2>&1; then
+      echo "cluster accepted in zone $Z"
+      DB_VSW_ID="$ZVSW"; DB_ZONE="$Z"
+      break
+    fi
+    echo "zone $Z rejected"
+    N=$((N+1))
+  done
+  [ -n "$DB_VSW_ID" ] || { echo "FATAL: no zone accepted serverless PG"; exit 1; }
   CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterId? // empty')
   say "Waiting for cluster $CLUSTER_ID to become Running"
   ST=""
@@ -123,6 +144,8 @@ echo "DB_NAME=$DB_PROD"
 echo "DB_NAME_STAGING=$DB_STAGING"
 echo "--- s.yaml infrastructure wiring ---"
 echo "VPC_ID=$VPC_ID"
+echo "DB_ZONE=$DB_ZONE"
+echo "DB_VSWITCH_ID=$DB_VSW_ID"
 echo "VSWITCH_ID=$VSW_ID"
 echo "SECURITY_GROUP_ID=$SG_ID"
 echo "========================================================================"
