@@ -49,7 +49,8 @@ def test_agent_pr_syncs_pr_opened_with_branch_item_number():
 
 
 def test_human_pr_still_dispatches_review():
-    ev = dict(AGENT_PR)
+    import copy
+    ev = copy.deepcopy(AGENT_PR)
     ev["payload"]["pull_request"]["head"]["ref"] = "feature/other"
     d = route(ev)
     assert d.should_dispatch is True
@@ -63,3 +64,38 @@ def test_mention_comment_still_dispatches_response():
     d = route(ev)
     assert d.should_dispatch is True
     assert d.agent_type == "response"
+
+
+# ---------------------------------------------------------------------------
+# M4: PR close release, blocked comment, iteration cap
+# ---------------------------------------------------------------------------
+
+def _closed_pr(merged):
+    import copy
+    ev = copy.deepcopy(AGENT_PR)
+    ev["payload"]["action"] = "closed"
+    ev["payload"]["pull_request"]["merged"] = merged
+    return ev
+
+
+def test_agent_pr_merged_syncs_done():
+    d = route(_closed_pr(True))
+    assert d.should_dispatch is False
+    assert d.sync_task is not None
+    assert d.sync_task.task_status == "done"
+    assert d.sync_task.item_number == 7
+
+
+def test_agent_pr_closed_unmerged_syncs_released():
+    d = route(_closed_pr(False))
+    assert d.sync_task is not None
+    assert d.sync_task.task_status == "released"
+
+
+def test_blocked_comment_syncs_blocked():
+    ev = dict(PLAN_COMMENT)
+    ev["payload"]["comment"]["body"] = "<!-- hola-blocked -->\n**Status: blocked**..."
+    d = route(ev)
+    assert d.should_dispatch is False
+    assert d.sync_task is not None
+    assert d.sync_task.task_status == "blocked"

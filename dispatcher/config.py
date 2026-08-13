@@ -33,6 +33,7 @@ class DispatcherSettings(BaseSettings):
     # ---- agent execution ----
     claude_bin: str = "claude"          # testable via fake_claude.py
     workspace_root: str = "./workspaces"
+    max_ci_resumes: int = 3             # CI-failure resumes before escalation
 
     # ---- logging ----
     log_level: str = "INFO"

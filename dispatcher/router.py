@@ -32,11 +32,12 @@ class ResumeContext:
 @dataclass
 class SyncTask:
     """State sync for an EXISTING task — no agent dispatch, the puller
-    patches the original task event instead (M2/M3)."""
-    task_status: str                       # planned | pr_opened | ci_passed | ...
+    patches the original task event instead (M2/M3/M4)."""
+    task_status: str                       # planned | pr_opened | ci_passed | done | released | blocked | failed | ...
     commit_sha: str | None = None
     item_number: int | None = None         # override when derived from branch name
     event_id: int | None = None            # direct target event (by-commit lookups)
+    claim_token: str = ""                  # original event's claim token for direct targets
 
 
 @dataclass
@@ -113,6 +114,20 @@ def route(event: dict[str, Any], fc_client=None) -> RouteDecision:
                 )
             return RouteDecision(True, agent_type="review", reason="PR opened")
         if action == "closed":
+            pr = payload.get("pull_request") or {}
+            branch = (pr.get("head") or {}).get("ref", "")
+            m = re.match(r"hola/issue-(\d+)", branch)
+            merged = bool(pr.get("merged", False))
+            if m:
+                # M4: release the workspace on PR close; merged → done,
+                # closed-unmerged → released (issue stays open).
+                status = "done" if merged else "released"
+                return RouteDecision(
+                    False,
+                    reason=f"agent PR closed (merged={merged}) — release workspace",
+                    skip_ack=True,
+                    sync_task=SyncTask(status, item_number=int(m.group(1))),
+                )
             return RouteDecision(False, reason="PR closed — no action needed", skip_ack=True)
         return RouteDecision(False, reason=f"PR {action} — ignored", skip_ack=True)
 
@@ -133,6 +148,14 @@ def route(event: dict[str, Any], fc_client=None) -> RouteDecision:
                     reason="plan comment — sync task state",
                     skip_ack=True,
                     sync_task=SyncTask("planned"),
+                )
+            if comment_body.lstrip().startswith("<!-- hola-blocked -->"):
+                # M4: agent reported itself blocked — workspace is kept.
+                return RouteDecision(
+                    False,
+                    reason="blocked comment — sync task state",
+                    skip_ack=True,
+                    sync_task=SyncTask("blocked"),
                 )
             if sender == "github-actions[bot]" and "<!-- ocr-" in comment_body:
                 # OpenCodeReview feedback — the puller resolves the PR's
@@ -212,6 +235,20 @@ def _route_ci_event(event: dict[str, Any], fc_client=None) -> RouteDecision:
                 (task_payload.get("issue") or {}).get("number")
                 or (task_payload.get("pull_request") or {}).get("number")
             )
+            # M4: iteration cap — repeated CI failures on this trigger
+            # escalate to human instead of resuming forever.
+            settings = get_settings()
+            if event.get("retry_count", 0) >= settings.max_ci_resumes:
+                return RouteDecision(
+                    False,
+                    reason=f"CI retries exhausted ({event.get('retry_count')}) — escalation",
+                    skip_ack=True,
+                    sync_task=SyncTask(
+                        "failed",
+                        event_id=task["id"],
+                        claim_token=task.get("claim_token") or "",
+                    ),
+                )
             return RouteDecision(
                 should_dispatch=True,
                 agent_type="resume",
