@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -16,6 +17,7 @@ from dispatcher.fc_client import FCClient
 from dispatcher.kanban import KanbanClient
 from dispatcher.identity import resolve, get_current_target
 from dispatcher.router import ResumeContext, RouteDecision, route
+from dispatcher import hola_switch, workspace
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +36,23 @@ def _extract_node_id(event: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_item_number(event: dict[str, Any]) -> int | None:
+    """Get the issue/PR number from the event payload (workspace key)."""
+    payload = event.get("payload", {})
+    for key in ("issue", "pull_request"):
+        n = (payload.get(key) or {}).get("number")
+        if n is not None:
+            return n
+    return None
+
+
 def _run_agent(
     event: dict[str, Any],
     agent_type: str,
     identity: object | None,
     custom_prompt: str | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Launch Claude Code as a subprocess to handle the event.
 
@@ -85,7 +99,8 @@ def _run_agent(
         f"Title: {title}\n"
         f"Body: {body[:2000]}\n\n"
         f"{identity_info}"
-        f"Use gh CLI to interact with GitHub as needed.\n\n"
+        f"Use gh CLI to interact with GitHub as needed.\n"
+        f"Follow the hola-task-run skill.\n\n"
         f"IMPORTANT: When you are done (code committed and pushed), "
         f"output this exact tag as your last message:\n"
         f"<CommitSha>REPLACE_WITH_FULL_40_CHAR_SHA</CommitSha>"
@@ -95,11 +110,13 @@ def _run_agent(
     ident_target = identity.target_id if identity else None
 
     try:
+        settings = get_settings()
         result = subprocess.run(
-            ["claude", "--session-id", session_id,
+            [settings.claude_bin, "--session-id", session_id,
              "--name", f"task-{event['id']}",
              "-p", prompt],
             capture_output=True, text=True, timeout=600,
+            cwd=cwd, env=env,
         )
         commit_sha = _parse_commit_marker(result.stdout)
 
@@ -186,7 +203,13 @@ def _dispatch(
                 "status": "failed",
                 "message": f"no identity for {decision.agent_type}",
             }
-        return _run_agent(event, decision.agent_type, identity)
+        item_number = _extract_item_number(event)
+        cwd = env = None
+        if item_number:
+            cwd = str(workspace.allocate(
+                repo, item_number, event["id"], identity.identity_name))
+            env = {**os.environ, **hola_switch.resolve_identity_env(identity.identity_name)}
+        return _run_agent(event, decision.agent_type, identity, cwd=cwd, env=env)
 
     # ---- resume dispatch ----
     ctx = decision.resume_context
@@ -196,6 +219,13 @@ def _dispatch(
             "message": "resume agent_type without resume_context",
         }
 
+    # Workspace + identity env: derived from the original task (do NOT
+    # rewrite the task metadata on resume — the original values win).
+    cwd = env = None
+    if ctx.item_number and repo:
+        cwd = str(workspace.ensure(repo, ctx.item_number))
+        env = {**os.environ, **hola_switch.resolve_identity_env(ctx.identity_name)}
+
     # 1. detect re-bind
     current_target = get_current_target(ctx.identity_name)
     target_changed = (current_target != ctx.target_id)
@@ -204,7 +234,7 @@ def _dispatch(
     # 2. choose strategy
     if not target_changed and session_available:
         logger.info("Hot resume: target=%s session=%s", ctx.target_id, ctx.session_id[:12])
-        result = _resume_agent(ctx, event)
+        result = _resume_agent(ctx, event, cwd=cwd, env=env)
     else:
         reason = "target changed" if target_changed else "session not found"
         logger.info(
@@ -212,7 +242,7 @@ def _dispatch(
             reason, ctx.target_id, current_target,
         )
         identity = resolve("triage", repo)
-        result = _cold_start_agent(ctx, identity, event)
+        result = _cold_start_agent(ctx, identity, event, cwd=cwd, env=env)
 
     # 3. update original task event
     if result.get("status") == "completed":
@@ -226,19 +256,27 @@ def _dispatch(
     return result
 
 
-def _resume_agent(ctx: ResumeContext, event: dict[str, Any]) -> dict[str, Any]:
-    """Hot resume: ``claude --resume <session_id> -p '…'``."""
+def _resume_agent(
+    ctx: ResumeContext,
+    event: dict[str, Any],
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Hot resume: ``claude --resume <session_id> -p '…'`` in the task workspace."""
     prompt = (
         f"CI workflow failed for commit {ctx.commit_sha[:7]}.\n"
         f"Error: {ctx.error_message}\n\n"
         f"Fix the issue, commit your changes, and push.\n"
+        f"Follow the hola-task-resume skill.\n\n"
         f"IMPORTANT: When done, output this exact tag as your last message:\n"
         f"<CommitSha>REPLACE_WITH_FULL_40_CHAR_SHA</CommitSha>"
     )
     try:
+        settings = get_settings()
         result = subprocess.run(
-            ["claude", "--resume", ctx.session_id, "-p", prompt],
+            [settings.claude_bin, "--resume", ctx.session_id, "-p", prompt],
             capture_output=True, text=True, timeout=600,
+            cwd=cwd, env=env,
         )
         commit_sha = _parse_commit_marker(result.stdout)
         if result.returncode == 0:
@@ -259,6 +297,8 @@ def _cold_start_agent(
     ctx: ResumeContext,
     identity: object | None,
     event: dict[str, Any],
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Cold start: full context via prompt for a fresh agent."""
     identity_name = (
@@ -271,10 +311,11 @@ def _cold_start_agent(
         f"CI Error: {ctx.error_message}\n\n"
         f"Fix the issue, commit, and push. "
         f"The commit author should remain '{identity_name}'.\n"
+        f"Follow the hola-task-run skill.\n\n"
         f"IMPORTANT: When done, output this exact tag as your last message:\n"
         f"<CommitSha>REPLACE_WITH_FULL_40_CHAR_SHA</CommitSha>"
     )
-    return _run_agent(event, "triage", identity, custom_prompt=prompt)
+    return _run_agent(event, "triage", identity, custom_prompt=prompt, cwd=cwd, env=env)
 
 
 def _check_session_exists(target_id: str, session_id: str) -> bool:

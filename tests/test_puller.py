@@ -133,6 +133,69 @@ def test_run_agent_prompt_includes_marker():
     assert logger is not None  # module loads correctly
 
 
+def test_dispatch_wires_workspace_and_identity_env(monkeypatch, tmp_path):
+    """M1: _dispatch launches the agent with cwd=workspace, injected
+    identity env, configurable claude_bin, and the runbook skill named."""
+    import json
+    import sqlite3
+    import subprocess as sp
+
+    from dispatcher import workspace
+    from dispatcher.config import get_settings
+    from dispatcher.puller import _dispatch
+    from dispatcher.router import RouteDecision
+
+    # fixture Hola-Switch data store
+    db = tmp_path / "cc-switch.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE identities (id TEXT, name TEXT, description TEXT);"
+        "CREATE TABLE identity_credentials (identity_id TEXT, credential_type TEXT, data TEXT, created_at TEXT);"
+    )
+    conn.execute("INSERT INTO identities VALUES ('id-1', 'holagent001', 't')")
+    conn.execute(
+        "INSERT INTO identity_credentials VALUES ('id-1', 'github-account', ?, 'x')",
+        (json.dumps({"token": "sha256:x", "git_name": "holagent001",
+                     "git_email": "h@qq.com", "ssh_key_path": ""}),),
+    )
+    conn.commit()
+    conn.close()
+    cred = tmp_path / "credentials" / "id-1"
+    cred.mkdir(parents=True)
+    (cred / "github-account.env").write_text("GITHUB_TOKEN=ghp_envtoken\n", encoding="utf-8")
+
+    settings = get_settings()
+    settings.workspace_root = str(tmp_path)
+    settings.claude_bin = "fake-claude"
+    settings.hola_switch_db_path = str(db)
+
+    captured = {}
+
+    def fake_run(args, **kw):
+        captured["args"] = args
+        captured["cwd"] = kw.get("cwd")
+        captured["env"] = kw.get("env")
+        return sp.CompletedProcess(args, 0, stdout="<CommitSha>" + "f" * 40 + "</CommitSha>", stderr="")
+
+    monkeypatch.setattr("dispatcher.puller.subprocess.run", fake_run)
+
+    event = {
+        "id": 5, "event_type": "issues", "repo_full_name": "HolAgents/demo",
+        "payload": {"issue": {"number": 7}, "sender": {"login": "u"}},
+        "claim_token": "t",
+    }
+    decision = RouteDecision(True, agent_type="triage", reason="issue opened")
+    result = _dispatch(event, decision, fc=None)
+
+    assert result["status"] == "completed"
+    assert captured["cwd"] == str(workspace.derive_path("HolAgents/demo", 7))
+    assert captured["env"]["GH_TOKEN"] == "ghp_envtoken"
+    assert captured["env"]["GIT_AUTHOR_NAME"] == "holagent001"
+    assert captured["env"]["HOLA_AGENT_ID"] == "holagent001"
+    assert captured["args"][0] == "fake-claude"
+    assert "hola-task-run" in captured["args"][-1]
+
+
 # ---------------------------------------------------------------------------
 # Cold start prompt content
 # ---------------------------------------------------------------------------
