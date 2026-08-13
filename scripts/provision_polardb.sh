@@ -81,14 +81,22 @@ create_cluster() {
       ZVSW=$(aliyun vpc DescribeVSwitches --region "$REGION" --VpcId "$VPC_ID" --ZoneId "$Z" | jqv '.. | objects | .VSwitchId? // empty')
     fi
     echo "trying zone $Z (vswitch $ZVSW)"
-    if aliyun polardb CreateDBCluster --region "$REGION" \
+    # Capture the cluster id DIRECTLY from the create response.  Run 11
+    # discarded it and re-looked-up via DescribeDBClusters immediately
+    # after creation — the async create wasn't visible yet, the lookup
+    # returned empty, and the account step fired with a blank id
+    # (InvalidDBClusterId.Malformed), orphaning the new cluster.
+    if CREATE_RESP=$(aliyun polardb CreateDBCluster --region "$REGION" \
         --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
         --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
         --ScaleRoNumMin 1 --ScaleRoNumMax 1 \
         --DBNodeClass polar.pg.sl.small \
         --DBClusterDescription "$CLUSTER_DESC" \
-        --VPCId "$VPC_ID" --VSwitchId "$ZVSW" >/dev/null 2>&1; then
-      echo "cluster accepted in zone $Z"
+        --VPCId "$VPC_ID" --VSwitchId "$ZVSW" 2>&1); then
+      CLUSTER_ID=$(echo "$CREATE_RESP" | jq -r '.. | objects | .DBClusterId? // empty' 2>/dev/null | head -1 || echo "")
+    fi
+    if [ -n "$CLUSTER_ID" ]; then
+      echo "cluster accepted in zone $Z: $CLUSTER_ID"
       DB_VSW_ID="$ZVSW"; DB_ZONE="$Z"
       break
     fi
@@ -96,14 +104,20 @@ create_cluster() {
     N=$((N+1))
   done
   [ -n "$DB_VSW_ID" ] || { echo "FATAL: no zone accepted serverless PG"; exit 1; }
-  CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
   say "Waiting for cluster $CLUSTER_ID to become Running"
   ST=""
   for i in $(seq 1 60); do
-    ST=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterDescription? == $d) | .DBClusterStatus // empty' | head -1)
+    RESP=$(aliyun polardb DescribeDBClusters --region "$REGION")
+    ST=$(echo "$RESP" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterDescription? == $d) | .DBClusterStatus // empty' | head -1)
+    # Fallback: if the create response carried no id for any reason, the
+    # cluster is visible in Describe by the time it's Running.
+    if [ -z "$CLUSTER_ID" ]; then
+      CLUSTER_ID=$(echo "$RESP" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
+    fi
     [ "$ST" = "Running" ] && break
     sleep 15
   done
+  [ -n "$CLUSTER_ID" ] || { echo "FATAL: cluster id never resolved"; exit 1; }
   [ "$ST" = "Running" ] || { echo "FATAL: cluster not running (status=$ST)"; exit 1; }
 }
 
@@ -117,12 +131,19 @@ else
     # the creating run's runner temp file. The ledger is empty — delete
     # and recreate so the password and account are created together.
     say "No stored password for existing cluster — recreating"
-    aliyun polardb DeleteDBCluster --region "$REGION" --DBClusterId "$CLUSTER_ID" >/dev/null
+    # Delete EVERY orphan (repeated failed runs can leave several) —
+    # deleting only the first match would leave leftovers that poison
+    # later lookups.
+    for ORPHAN_ID in $(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId'); do
+      say "Deleting orphan cluster $ORPHAN_ID"
+      aliyun polardb DeleteDBCluster --region "$REGION" --DBClusterId "$ORPHAN_ID" >/dev/null
+    done
     for i in $(seq 1 30); do
       GONE=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
       [ -z "$GONE" ] && break
       sleep 10
     done
+    [ -z "$GONE" ] || { echo "FATAL: orphan cluster still present after delete"; exit 1; }
     CLUSTER_ID=""
     create_cluster
   fi
