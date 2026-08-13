@@ -161,7 +161,7 @@ say "Databases"
 for DB in "$DB_PROD" "$DB_STAGING"; do
   if ! aliyun polardb DescribeDatabases --region "$REGION" --DBClusterId "$CLUSTER_ID" | jq -e '.. | objects | select(.DBName? == "'"$DB"'")' >/dev/null 2>&1; then
     aliyun polardb CreateDatabase --region "$REGION" --DBClusterId "$CLUSTER_ID" \
-      --DBName "$DB" --AccountName "$DB_USER"
+      --DBName "$DB" --AccountName "$DB_USER" --CharacterSetName UTF8
   fi
 done
 
@@ -170,9 +170,16 @@ aliyun polardb ModifyDBClusterAccessWhitelist --region "$REGION" --DBClusterId "
   --SecurityIps "10.10.0.0/16" --DBClusterIPArrayName default
 
 say "Endpoint"
-ATTR=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID")
-DB_HOST=$(echo "$ATTR" | jqv '.. | objects | .Address? // empty')
-[ -n "$DB_HOST" ] || DB_HOST="${CLUSTER_ID}.polardb.rds.aliyuncs.com"
+# DescribeDBClusterEndpoints is the API that actually returns Address;
+# DescribeDBClusterAttribute may not.  Hard-FATAL instead of guessing a
+# hostname that may not resolve.
+ATTR=$(aliyun polardb DescribeDBClusterEndpoints --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>/dev/null || echo "")
+DB_HOST=$(echo "$ATTR" | jqv '.. | objects | .Address? // empty' || echo "")
+if [ -z "$DB_HOST" ]; then
+  ATTR=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>/dev/null || echo "")
+  DB_HOST=$(echo "$ATTR" | jqv '.. | objects | .Address? // empty' || echo "")
+fi
+[ -n "$DB_HOST" ] || { echo "FATAL: no endpoint address found"; exit 1; }
 
 echo ""
 echo "=========================== CONNECTION BLOCK ==========================="
