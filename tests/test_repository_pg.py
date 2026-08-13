@@ -47,16 +47,20 @@ def _insert(conn, delivery, event_type="issues", payload=None, repo="HolAgents/t
 
 
 def test_insert_and_dedup(conn):
-    assert _insert(conn, "d-1") == 1
+    first = _insert(conn, "d-1")
+    assert first is not None
     assert _insert(conn, "d-1") is None  # duplicate delivery ignored
-    assert _insert(conn, "d-2") == 2
+    second = _insert(conn, "d-2")
+    # ids are opaque: a conflicted insert may still consume a sequence
+    # value, so assert distinct/increasing rather than contiguous ids
+    assert second is not None and second > first
 
 
 def test_claim_order_and_ack(conn):
-    _insert(conn, "d-1")
-    _insert(conn, "d-2")
+    id1 = _insert(conn, "d-1")
+    id2 = _insert(conn, "d-2")
     claimed, remaining = claim_batch(conn, limit=10)
-    assert [c["id"] for c in claimed] == [1, 2]
+    assert [c["id"] for c in claimed] == [id1, id2]
     assert remaining == 0
 
     res = ack_batch(conn, [{
@@ -65,7 +69,7 @@ def test_claim_order_and_ack(conn):
         "status": "completed",
     }])
     assert res["acked"] == 1
-    ev = get_event(conn, 1)
+    ev = get_event(conn, id1)
     assert ev["status"] == "completed"
 
 
@@ -83,10 +87,10 @@ def test_ack_token_mismatch_rejected(conn):
 
 def test_same_issue_dedup_skips_busy(conn):
     payload2 = dict(PAYLOAD)
-    _insert(conn, "d-1", payload=PAYLOAD)
+    id1 = _insert(conn, "d-1", payload=PAYLOAD)
     _insert(conn, "d-2", payload=payload2)
     first, _ = claim_batch(conn, limit=1)
-    assert [c["id"] for c in first] == [1]  # claims only one
+    assert [c["id"] for c in first] == [id1]  # claims only one
     second, _ = claim_batch(conn, limit=1)
     assert second == []  # same issue number is processing → skip
 
