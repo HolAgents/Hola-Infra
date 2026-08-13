@@ -214,7 +214,6 @@ jobs:
           VPC_ID: ${{ vars.VPC_ID }}
           VSWITCH_ID: ${{ vars.VSWITCH_ID }}
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
-          NAS_SERVER_ADDR: ${{ vars.NAS_SERVER_ADDR }}
         run: s deploy -y --use-local -t s.staging.yaml
 
   deploy-production:
@@ -268,5 +267,4 @@ jobs:
           VPC_ID: ${{ vars.VPC_ID }}
           VSWITCH_ID: ${{ vars.VSWITCH_ID }}
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
-          NAS_SERVER_ADDR: ${{ vars.NAS_SERVER_ADDR }}
         run: s deploy -y --use-local

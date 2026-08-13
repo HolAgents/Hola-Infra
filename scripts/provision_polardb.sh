@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Idempotent provisioning of the Hola-Infra infrastructure on a
-# USER-OWNED VPC: VPC + VSwitch + SecurityGroup + NAS (for the FC
-# function), and the PolarDB Serverless PostgreSQL events ledger.
+# Idempotent provisioning of the Hola-Infra database on a
+# USER-OWNED VPC: VPC + VSwitch + SecurityGroup + the PolarDB
+# Serverless PostgreSQL events ledger (no NAS — the SQLite fallback
+# writes to the instance's ephemeral /tmp).
 # Runs in CI with OIDC STS credentials; the aliyun CLI must already be
 # configured (StsToken mode).
 #
@@ -56,34 +57,6 @@ echo "security_group=$SG_ID"
 
 # ---------------------------------------------------------------------------
 # 2. NAS for the FC function (user-owned, NFS, mounted at /mnt/auto)
-# ---------------------------------------------------------------------------
-
-say "NAS"
-# DescribeFileSystems has no --Description filter — match client-side.
-NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" | jq -r --arg d "$NAS_DESC" '.. | objects | select(.FileSystemId? != null and (.Description? // "" | contains($d))) | .FileSystemId' | head -1)
-if [ -z "$NAS_ID" ]; then
-  aliyun nas CreateFileSystem --region "$REGION" \
-    --FileSystemType standard --ProtocolType NFS --StorageType Capacity \
-    --Description "$NAS_DESC" --ZoneId "$ZONE_ID" >/dev/null
-  # DescribeFileSystems has no --Description filter — match client-side.
-NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" | jq -r --arg d "$NAS_DESC" '.. | objects | select(.FileSystemId? != null and (.Description? // "" | contains($d))) | .FileSystemId' | head -1)
-  sleep 5
-fi
-NAS_ADDR=$(aliyun nas DescribeMountTargets --region "$REGION" --FileSystemId "$NAS_ID" | jqv '.. | objects | .MountTargetDomain? // empty')
-if [ -z "$NAS_ADDR" ]; then
-  aliyun nas CreateMountTarget --region "$REGION" --FileSystemId "$NAS_ID" \
-    --NetworkType Vpc --VpcId "$VPC_ID" --VSwitchId "$VSW_ID" \
-    --AccessGroupName DEFAULT_VPC_GROUP_NAME >/dev/null
-  for i in $(seq 1 30); do
-    NAS_ADDR=$(aliyun nas DescribeMountTargets --region "$REGION" --FileSystemId "$NAS_ID" | jqv '.. | objects | .MountTargetDomain? // empty')
-    [ -n "$NAS_ADDR" ] && break
-    sleep 5
-  done
-fi
-echo "nas=$NAS_ID addr=$NAS_ADDR"
-
-# ---------------------------------------------------------------------------
-# 3. PolarDB Serverless cluster + account + databases
 # ---------------------------------------------------------------------------
 
 say "Find or create cluster"
@@ -152,5 +125,4 @@ echo "--- s.yaml infrastructure wiring ---"
 echo "VPC_ID=$VPC_ID"
 echo "VSWITCH_ID=$VSW_ID"
 echo "SECURITY_GROUP_ID=$SG_ID"
-echo "NAS_SERVER_ADDR=${NAS_ADDR}:/"
 echo "========================================================================"
