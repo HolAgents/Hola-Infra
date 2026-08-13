@@ -135,11 +135,16 @@ else
     say "Rotating account password on existing cluster"
     PW="$HOLA_DB_NEW_PW"
     echo "::add-mask::$PW"
-    if aliyun polardb ModifyAccountPassword --region "$REGION" --DBClusterId "$CLUSTER_ID" \
-        --AccountName "$DB_USER" --AccountPassword "$PW" >/dev/null 2>&1; then
+    # ModifyAccountPassword takes --NewAccountPassword (CreateAccount's
+    # --AccountPassword is rejected client-side). Print the error instead
+    # of swallowing it so a failed rotation is diagnosable from the log.
+    ROTATE_RESP=$(aliyun polardb ModifyAccountPassword --region "$REGION" --DBClusterId "$CLUSTER_ID" \
+        --AccountName "$DB_USER" --NewAccountPassword "$PW" 2>&1) && ROTATE_OK=1 || ROTATE_OK=0
+    if [ "$ROTATE_OK" = "1" ]; then
       echo "$PW" > /tmp/hola_db_pw
     else
       say "Rotation failed — falling back to recreate"
+      echo "rotate-error: $ROTATE_RESP"
       PW=""
     fi
   fi
@@ -197,13 +202,15 @@ say "Endpoint"
 # hard-FATAL instead of guessing a hostname that may not resolve.
 # jqv (not bare jq) so empty-string values can't bypass the `//`
 # fallthrough — `//` only falls back on null/false (OCR finding, PR #67).
+# The caller must pass the recursive probe (jqv itself does no recursion):
+# the real shape is Items[].AddressItems[].ConnectionString.
 EP_RAW=$(aliyun polardb DescribeDBClusterEndpoints --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "")
 echo "endpoints-raw: $EP_RAW"
-DB_HOST=$(echo "$EP_RAW" | jqv '.Address? // .ConnectionString? // empty' || echo "")
+DB_HOST=$(echo "$EP_RAW" | jqv '.. | objects | (.Address? // .ConnectionString? // empty)' || echo "")
 if [ -z "$DB_HOST" ]; then
   EP_RAW=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "")
   echo "attr-raw: $EP_RAW"
-  DB_HOST=$(echo "$EP_RAW" | jqv '.Address? // .ConnectionString? // empty' || echo "")
+  DB_HOST=$(echo "$EP_RAW" | jqv '.. | objects | (.Address? // .ConnectionString? // empty)' || echo "")
 fi
 [ -n "$DB_HOST" ] || { echo "FATAL: no endpoint address found"; exit 1; }
 
