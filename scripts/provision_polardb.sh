@@ -221,9 +221,14 @@ echo "$SG_RULES"
 # be rule-less (default drop = the timeout signature). Add allow-all
 # egress when no egress rule exists.
 if ! echo "$SG_RULES" | jq -e '.. | objects | select(.Direction? == "egress")' >/dev/null 2>&1; then
-  say "Adding default allow-all egress rule"
+  say "Adding allow-all egress rules (tcp/udp 1/65535)"
+  # The API rejects `--IpProtocol all --PortRange -1/-1`
+  # (InvalidParam.PortRange: "two integers less than 65535 in ?/?
+  # format"), so add per-protocol rules instead.
   aliyun ecs AuthorizeSecurityGroupEgress --region "$REGION" --SecurityGroupId "$SG_ID" \
-    --IpProtocol all --PortRange -1/-1 --DestCidrIp 0.0.0.0/0 --Policy accept
+    --IpProtocol tcp --PortRange 1/65535 --DestCidrIp 0.0.0.0/0 --Policy accept
+  aliyun ecs AuthorizeSecurityGroupEgress --region "$REGION" --SecurityGroupId "$SG_ID" \
+    --IpProtocol udp --PortRange 1/65535 --DestCidrIp 0.0.0.0/0 --Policy accept
 fi
 
 say "Endpoint"
