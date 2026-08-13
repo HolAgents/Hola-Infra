@@ -96,3 +96,11 @@ class EventPatchRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str                     # "ok"
     db: str                         # "connected" | "error: …"
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat (claim lease refresh)
+# ---------------------------------------------------------------------------
+
+class HeartbeatRequest(BaseModel):
+    claim_token: str    # required for ownership check

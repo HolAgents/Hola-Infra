@@ -13,10 +13,17 @@ from app.models import (
     ClaimRequest,
     ClaimResponse,
     EventPatchRequest,
+    HeartbeatRequest,
 )
 from app.security import require_api_key
 from app.services.claiming import do_ack, do_claim
-from app.repository import query_events, get_event, query_by_commit, patch_event
+from app.repository import (
+    get_event,
+    heartbeat as heartbeat_repo,
+    patch_event,
+    query_by_commit,
+    query_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +116,16 @@ def get_one_event(event_id: int):
     if ev is None:
         raise HTTPException(status_code=404, detail="event not found")
     return ev
+
+
+@router.post("/{event_id}/heartbeat", summary="Refresh the claim lease of a processing event")
+def heartbeat_event(event_id: int, body: HeartbeatRequest):
+    """Refresh ``claimed_at`` so a long-running agent does not hit the
+    TTL requeue.  404 when the event is not found, not processing, or
+    the claim_token does not match (Hola-Infra#43)."""
+    ok = run_with_db_retry(
+        lambda conn: heartbeat_repo(conn, event_id, body.claim_token)
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="event not found, not processing, or token mismatch")
+    return {"status": "ok"}
