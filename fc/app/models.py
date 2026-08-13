@@ -96,6 +96,7 @@ class EventPatchRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str                     # "ok"
     db: str                         # "connected" | "error: …"
+    net: str = ""                   # optional VPC context (src ip diagnostics)
 
 
 # ---------------------------------------------------------------------------
