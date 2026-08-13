@@ -216,6 +216,17 @@ jobs:
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
         run: s deploy -y --use-local -t s.staging.yaml
 
+      - name: Enforce vpcConfig (FC 3.0 API)
+        working-directory: fc
+        env:
+          FC_FUNCTION_NAME: webhook-ingest-staging
+          VPC_ID: ${{ vars.VPC_ID }}
+          VSWITCH_ID: ${{ vars.VSWITCH_ID }}
+          SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
+        run: |
+          pip install -q alibabacloud-fc20230330
+          python scripts/enforce_vpc.py
+
   deploy-production:
     name: Deploy to FC (production)
     runs-on: ubuntu-latest
@@ -268,3 +279,14 @@ jobs:
           VSWITCH_ID: ${{ vars.VSWITCH_ID }}
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
         run: s deploy -y --use-local
+
+      - name: Enforce vpcConfig (FC 3.0 API)
+        working-directory: fc
+        env:
+          FC_FUNCTION_NAME: webhook-ingest
+          VPC_ID: ${{ vars.VPC_ID }}
+          VSWITCH_ID: ${{ vars.VSWITCH_ID }}
+          SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
+        run: |
+          pip install -q alibabacloud-fc20230330
+          python scripts/enforce_vpc.py
