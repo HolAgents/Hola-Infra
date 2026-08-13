@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
 import psycopg2
@@ -32,6 +33,12 @@ _EVENT_COLS = (
 def _to_dict(row, cur) -> dict[str, Any]:
     cols = [d[0] for d in cur.description]
     d = dict(zip(cols, row))
+    # psycopg2 returns datetime objects for timestamp columns; the API
+    # contract (and the SQLite backend) emits ISO-8601 strings, and the
+    # response models require str (ClaimResponse validation 500 otherwise).
+    for key, value in d.items():
+        if isinstance(value, datetime):
+            d[key] = value.isoformat()
     payload = d.get("payload")
     if isinstance(payload, str):
         d["payload"] = json.loads(payload)
@@ -158,11 +165,7 @@ def claim_batch(
     rows = cur.fetchall()
     conn.commit()
 
-    claimed = []
-    for r in rows:
-        d = dict(zip([c[0] for c in cur.description], r))
-        d["payload"] = d["payload"] if isinstance(d["payload"], dict) else json.loads(d["payload"])
-        claimed.append(d)
+    claimed = [_to_dict(r, cur) for r in rows]
 
     cur.execute("SELECT COUNT(*) FROM events WHERE status = 'received'")
     remaining = cur.fetchone()[0]
