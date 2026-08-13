@@ -160,8 +160,12 @@ fi
 say "Databases"
 for DB in "$DB_PROD" "$DB_STAGING"; do
   if ! aliyun polardb DescribeDatabases --region "$REGION" --DBClusterId "$CLUSTER_ID" | jq -e '.. | objects | select(.DBName? == "'"$DB"'")' >/dev/null 2>&1; then
+    say "Creating database $DB"
+    # PolarDB PostgreSQL requires Collate/Ctype whenever CharacterSetName
+    # is specified (server-side InvalidParameters.Format otherwise).
     aliyun polardb CreateDatabase --region "$REGION" --DBClusterId "$CLUSTER_ID" \
-      --DBName "$DB" --AccountName "$DB_USER" --CharacterSetName UTF8
+      --DBName "$DB" --AccountName "$DB_USER" \
+      --CharacterSetName UTF8 --Collate C --Ctype C
   fi
 done
 
