@@ -38,6 +38,7 @@ if [ -z "$CLUSTER_ID" ]; then
   aliyun polardb CreateDBCluster --region "$REGION" \
     --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
     --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
+    --DBNodeClass polar.pg.sl.small \
     --DBClusterDescription "$CLUSTER_DESC" \
     --ZoneId "$ZONE_ID" --VPCId "$VPC_ID" --VSwitchId "$VSW_ID"
   CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jq -r '.. | objects | .DBClusterId? // empty' | head -1)
