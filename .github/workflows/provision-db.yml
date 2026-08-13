@@ -37,4 +37,10 @@ jobs:
           aliyun version
 
       - name: Provision cluster + account + databases
+        env:
+          # Optional: when set, an existing cluster's account password is
+          # rotated to this value in place instead of deleting/recreating
+          # the cluster (the creating run's password dies with its runner;
+          # the repo is public so the value travels only via secrets).
+          HOLA_DB_NEW_PW: ${{ secrets.HOLA_DB_TMP_PW }}
         run: bash scripts/provision_polardb.sh
