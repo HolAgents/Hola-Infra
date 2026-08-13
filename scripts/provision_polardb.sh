@@ -37,13 +37,16 @@ if [ -z "$CLUSTER_ID" ]; then
   echo "$PW" > /tmp/hola_db_pw
   # Dump the parameter schema for debugging future API drift.
   aliyun polardb CreateDBCluster --help 2>&1 | grep -iE "serverless|scale|dbnodeclass" | head -20 || true
+  # ZoneId is omitted deliberately: PolarDB Serverless is not available
+  # in every zone (InvalidZoneID.NotFound), and VSwitchId already
+  # implies the zone — the service picks a valid one when omitted.
   aliyun polardb CreateDBCluster --region "$REGION" \
     --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
     --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
     --ScaleRoNumMin 1 --ScaleRoNumMax 1 \
     --DBNodeClass polar.pg.sl.small \
     --DBClusterDescription "$CLUSTER_DESC" \
-    --ZoneId "$ZONE_ID" --VPCId "$VPC_ID" --VSwitchId "$VSW_ID"
+    --VPCId "$VPC_ID" --VSwitchId "$VSW_ID"
   CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jq -r '.. | objects | .DBClusterId? // empty' | head -1)
   say "Waiting for cluster $CLUSTER_ID to become Running"
   for i in $(seq 1 60); do
