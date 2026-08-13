@@ -174,14 +174,17 @@ aliyun polardb ModifyDBClusterAccessWhitelist --region "$REGION" --DBClusterId "
   --SecurityIps "10.10.0.0/16" --DBClusterIPArrayName default
 
 say "Endpoint"
-# DescribeDBClusterEndpoints is the API that actually returns Address;
-# DescribeDBClusterAttribute may not.  Hard-FATAL instead of guessing a
-# hostname that may not resolve.
-ATTR=$(aliyun polardb DescribeDBClusterEndpoints --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>/dev/null || echo "")
-DB_HOST=$(echo "$ATTR" | jqv '.. | objects | .Address? // empty' || echo "")
+# DescribeDBClusterEndpoints is the API that actually returns the
+# connection address; DescribeDBClusterAttribute may not.  Print the raw
+# responses so a failure here is diagnosable from the run log, and
+# hard-FATAL instead of guessing a hostname that may not resolve.
+EP_RAW=$(aliyun polardb DescribeDBClusterEndpoints --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "")
+echo "endpoints-raw: $EP_RAW"
+DB_HOST=$(echo "$EP_RAW" | jq -r '.. | objects | (.Address? // .ConnectionString? // empty)' 2>/dev/null | head -1 || echo "")
 if [ -z "$DB_HOST" ]; then
-  ATTR=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>/dev/null || echo "")
-  DB_HOST=$(echo "$ATTR" | jqv '.. | objects | .Address? // empty' || echo "")
+  EP_RAW=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "")
+  echo "attr-raw: $EP_RAW"
+  DB_HOST=$(echo "$EP_RAW" | jq -r '.. | objects | (.Address? // .ConnectionString? // empty)' 2>/dev/null | head -1 || echo "")
 fi
 [ -n "$DB_HOST" ] || { echo "FATAL: no endpoint address found"; exit 1; }
 
