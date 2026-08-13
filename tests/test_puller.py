@@ -292,3 +292,57 @@ def test_resume_agent_uses_resume_flag():
         _resume_agent(ctx, {"id": 2, "claim_token": "y"})
     except FileNotFoundError:
         pass  # expected — no claude CLI
+
+
+# ---------------------------------------------------------------------------
+# M3: dedup key + resume fallback
+# ---------------------------------------------------------------------------
+
+
+def test_ci_dedup_key_distinguishes_runs():
+    from dispatcher.puller import _ci_dedup_key
+    from dispatcher.router import ResumeContext, RouteDecision
+
+    ctx = ResumeContext(
+        identity_name="i", target_id="claude-code", session_id="s",
+        commit_sha="abc123", error_message="e", original_event_id=1,
+    )
+    ev1 = {"id": 10, "payload": {"workflow_run": {"id": 100}}}
+    ev2 = {"id": 11, "payload": {"check_run": {"id": 200}}}
+    ev3 = {"id": 12, "payload": {"check_run": {"id": 200}}}  # same run, dup
+    d = RouteDecision(True, agent_type="resume", resume_context=ctx)
+
+    k1 = _ci_dedup_key(ev1, d)
+    k2 = _ci_dedup_key(ev2, d)
+    k3 = _ci_dedup_key(ev3, d)
+    assert k1 != k2          # different CI runs → different keys
+    assert k2 == k3          # same run → coalesced
+
+
+def test_execute_resume_falls_back_to_cold_start(monkeypatch, tmp_path):
+    from dispatcher.puller import _execute_resume
+    from dispatcher.router import ResumeContext
+
+    calls = []
+
+    def fake_resume(ctx, event, cwd=None, env=None):
+        calls.append("resume")
+        return {"status": "failed", "message": "session gone"}
+
+    def fake_cold(ctx, identity, event, cwd=None, env=None):
+        calls.append("cold")
+        return {"status": "completed", "message": "cold ok",
+                "commit_sha": "c" * 40, "session_id": ctx.session_id}
+
+    monkeypatch.setattr("dispatcher.puller._resume_agent", fake_resume)
+    monkeypatch.setattr("dispatcher.puller._cold_start_agent", fake_cold)
+
+    ctx = ResumeContext(
+        identity_name="i", target_id="claude-code", session_id="s",
+        commit_sha="abc", error_message="e", original_event_id=1,
+        claim_token="orig-token",
+    )
+    event = {"repo_full_name": "HolAgents/demo", "payload": {}}
+    result = _execute_resume(ctx, event, fc=None)
+    assert calls == ["resume", "cold"]
+    assert result["status"] == "completed"
