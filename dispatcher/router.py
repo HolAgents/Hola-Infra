@@ -24,6 +24,7 @@ class ResumeContext:
     commit_sha: str           # CI-failing commit
     error_message: str        # human-readable CI error
     original_event_id: int    # event_id of the original task
+    item_number: int | None = None  # issue/PR number of the original task (workspace path)
 
 
 @dataclass
@@ -143,6 +144,11 @@ def _route_ci_event(event: dict[str, Any], fc_client=None) -> RouteDecision:
     if commit_sha and fc_client is not None:
         task = fc_client.query_by_commit(commit_sha)
         if task and task.get("session_id"):
+            task_payload = task.get("payload") or {}
+            item_number = (
+                (task_payload.get("issue") or {}).get("number")
+                or (task_payload.get("pull_request") or {}).get("number")
+            )
             return RouteDecision(
                 should_dispatch=True,
                 agent_type="resume",
@@ -154,6 +160,7 @@ def _route_ci_event(event: dict[str, Any], fc_client=None) -> RouteDecision:
                     commit_sha=commit_sha,
                     error_message=_extract_ci_error(ci_obj, event_type),
                     original_event_id=task["id"],
+                    item_number=item_number,
                 ),
             )
 

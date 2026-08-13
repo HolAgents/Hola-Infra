@@ -25,9 +25,14 @@ class DispatcherSettings(BaseSettings):
     # ---- agent filtering ----
     agent_skip_senders: str = "hola-bot"
 
-    # ---- Hola-Switch (future) ----
-    hola_switch_api_url: str = ""       # empty = use local identity registry
+    # ---- Hola-Switch (local data store) ----
+    hola_switch_db_path: str = "~/.cc-switch/cc-switch.db"
+    hola_switch_api_url: str = ""       # empty = read the local DB/files directly
     hola_switch_cache_ttl: int = 300    # identity binding cache (seconds)
+
+    # ---- agent execution ----
+    claude_bin: str = "claude"          # testable via fake_claude.py
+    workspace_root: str = "./workspaces"
 
     # ---- logging ----
     log_level: str = "INFO"
