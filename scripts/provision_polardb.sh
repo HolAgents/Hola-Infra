@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Idempotent provisioning of the Hola-Infra events ledger on PolarDB
-# Serverless (PostgreSQL). Runs in CI with OIDC STS credentials; the
-# aliyun CLI must already be configured (StsToken mode).
+# Idempotent provisioning of the Hola-Infra infrastructure on a
+# USER-OWNED VPC: VPC + VSwitch + SecurityGroup + NAS (for the FC
+# function), and the PolarDB Serverless PostgreSQL events ledger.
+# Runs in CI with OIDC STS credentials; the aliyun CLI must already be
+# configured (StsToken mode).
 #
-# Discovers the FC service's VPC from its NAS mount, creates (or reuses)
-# the cluster, account, and databases, and prints the connection block.
+# The FC deploy component's DefaultNas lives in an FC-MANAGED VPC that
+# user resources cannot join (InvalidVPC.Malformed), so this script
+# provisions a dedicated user VPC and prints the ids that s.yaml needs.
 set -euo pipefail
 
 REGION=${REGION:-cn-hangzhou}
@@ -12,59 +15,83 @@ CLUSTER_DESC=hola-events-ledger
 DB_USER=${DB_USER:-hola}
 DB_PROD=hola
 DB_STAGING=hola_staging
+VPC_NAME=hola-infra-vpc
+VSW_NAME=hola-infra-vsw
+SG_NAME=hola-infra-sg
+NAS_DESC=hola-infra-nas
 
 say() { echo "== $* =="; }
 
-say "Discover VPC from NAS file systems"
-NAS=$(aliyun nas DescribeFileSystems --region "$REGION")
-# Each file system object nests its mount targets (which carry VpcId).
-# Print the fs↔vpc mapping, then prefer the FC deploy component's
-# default NAS ("DefaultNas" in the description).
-echo "$NAS" | jq -r '
-  .. | objects | select(has("FileSystemId") and has("MountTargets"))
-  | . as $fs
-  | ($fs.MountTargets.MountTarget[]? // {}) as $mt
-  | "fs=\($fs.FileSystemId) vpc=\($mt.VpcId // "-") vsw=\($mt.VSwitchId // "-") desc=\($fs.Description // "-")"' | sort -u
+jqv() { # jqv '<filter>' — first matching value anywhere in the JSON tree
+  jq -r "$1 | select(. != null and . != \"\")" | head -1
+}
 
-FC_FS_ID=$(echo "$NAS" | jq -r '
-  .. | objects | select(.FileSystemId? != null and (.Description? // "" | contains("DefaultNas")))
-  | .FileSystemId' | head -1)
-if [ -n "$FC_FS_ID" ]; then
-  VPC_ID=$(echo "$NAS" | jq -r --arg fs "$FC_FS_ID" '
-    .. | objects | select(.FileSystemId? == $fs)
-    | .MountTargets.MountTarget[]?.VpcId // empty' | head -1)
-else
-  VPC_ID=""
+# ---------------------------------------------------------------------------
+# 1. User-owned VPC / VSwitch / SecurityGroup (idempotent lookups first)
+# ---------------------------------------------------------------------------
+
+say "User VPC"
+VPC_ID=$(aliyun vpc DescribeVpcs --region "$REGION" --VpcName "$VPC_NAME" | jqv '.. | objects | .VpcId? // empty')
+if [ -z "$VPC_ID" ]; then
+  aliyun vpc CreateVpc --region "$REGION" --VpcName "$VPC_NAME" --CidrBlock 10.10.0.0/16 >/dev/null
+  VPC_ID=$(aliyun vpc DescribeVpcs --region "$REGION" --VpcName "$VPC_NAME" | jqv '.. | objects | .VpcId? // empty')
 fi
+echo "vpc=$VPC_ID"
 
-# Cross-check with the FC API when the CLI supports it (best-effort).
-FC_API_VPC=$(aliyun fc3 DescribeService --region "$REGION" --ServiceName hola-webhook-service 2>/dev/null | jq -r '.. | objects | .VpcId? // empty' | head -1 || true)
-echo "fc-api vpc: ${FC_API_VPC:-unavailable}"
-if [ -n "$FC_API_VPC" ] && [ "$FC_API_VPC" != "null" ]; then
-  VPC_ID="$FC_API_VPC"
+ZONE_ID=$(aliyun ecs DescribeZones --region "$REGION" | jqv '.. | objects | .ZoneId? // empty')
+VSW_ID=$(aliyun vpc DescribeVSwitches --region "$REGION" --VpcId "$VPC_ID" | jqv '.. | objects | .VSwitchId? // empty')
+if [ -z "$VSW_ID" ]; then
+  aliyun vpc CreateVSwitch --region "$REGION" \
+    --VpcId "$VPC_ID" --ZoneId "$ZONE_ID" --CidrBlock 10.10.0.0/24 --VSwitchName "$VSW_NAME" >/dev/null
+  VSW_ID=$(aliyun vpc DescribeVSwitches --region "$REGION" --VpcId "$VPC_ID" | jqv '.. | objects | .VSwitchId? // empty')
 fi
+echo "vswitch=$VSW_ID zone=$ZONE_ID"
 
-test -n "$VPC_ID" || { echo "FATAL: could not determine the FC service VPC"; exit 1; }
-say "Using VPC: $VPC_ID"
+SG_ID=$(aliyun ecs DescribeSecurityGroups --region "$REGION" --VpcId "$VPC_ID" --SecurityGroupName "$SG_NAME" | jqv '.. | objects | .SecurityGroupId? // empty')
+if [ -z "$SG_ID" ]; then
+  aliyun ecs CreateSecurityGroup --region "$REGION" --VpcId "$VPC_ID" --SecurityGroupName "$SG_NAME" >/dev/null
+  SG_ID=$(aliyun ecs DescribeSecurityGroups --region "$REGION" --VpcId "$VPC_ID" --SecurityGroupName "$SG_NAME" | jqv '.. | objects | .SecurityGroupId? // empty')
+fi
+echo "security_group=$SG_ID"
 
-VPC=$(aliyun vpc DescribeVpcs --region "$REGION" --VpcId "$VPC_ID")
-VPC_CIDR=$(echo "$VPC" | jq -r '.. | objects | .CidrBlock? // empty' | head -1)
-VSW=$(aliyun vpc DescribeVSwitches --region "$REGION" --VpcId "$VPC_ID")
-VSW_ID=$(echo "$VSW" | jq -r '.. | objects | .VSwitchId? // empty' | head -1)
-ZONE_ID=$(echo "$VSW" | jq -r '.. | objects | .ZoneId? // empty' | head -1)
-echo "cidr=$VPC_CIDR vswitch=$VSW_ID zone=$ZONE_ID"
+# ---------------------------------------------------------------------------
+# 2. NAS for the FC function (user-owned, NFS, mounted at /mnt/auto)
+# ---------------------------------------------------------------------------
+
+say "NAS"
+NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" --Description "$NAS_DESC" | jqv '.. | objects | .FileSystemId? // empty')
+if [ -z "$NAS_ID" ]; then
+  aliyun nas CreateFileSystem --region "$REGION" \
+    --FileSystemType standard --ProtocolType NFS --StorageType Capacity \
+    --Description "$NAS_DESC" --ZoneId "$ZONE_ID" >/dev/null
+  NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" --Description "$NAS_DESC" | jqv '.. | objects | .FileSystemId? // empty')
+  sleep 5
+fi
+NAS_ADDR=$(aliyun nas DescribeMountTargets --region "$REGION" --FileSystemId "$NAS_ID" | jqv '.. | objects | .MountTargetDomain? // empty')
+if [ -z "$NAS_ADDR" ]; then
+  aliyun nas CreateMountTarget --region "$REGION" --FileSystemId "$NAS_ID" \
+    --NetworkType Vpc --VpcId "$VPC_ID" --VSwitchId "$VSW_ID" \
+    --AccessGroupName DEFAULT_VPC_GROUP_NAME >/dev/null
+  for i in $(seq 1 30); do
+    NAS_ADDR=$(aliyun nas DescribeMountTargets --region "$REGION" --FileSystemId "$NAS_ID" | jqv '.. | objects | .MountTargetDomain? // empty')
+    [ -n "$NAS_ADDR" ] && break
+    sleep 5
+  done
+fi
+echo "nas=$NAS_ID addr=$NAS_ADDR"
+
+# ---------------------------------------------------------------------------
+# 3. PolarDB Serverless cluster + account + databases
+# ---------------------------------------------------------------------------
 
 say "Find or create cluster"
-CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jq -r '.. | objects | .DBClusterId? // empty' | head -1)
+CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterId? // empty')
 if [ -z "$CLUSTER_ID" ]; then
   PW=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
   echo "::add-mask::$PW"
   echo "$PW" > /tmp/hola_db_pw
-  # Dump the parameter schema for debugging future API drift.
-  aliyun polardb CreateDBCluster --help 2>&1 | grep -iE "serverless|scale|dbnodeclass" | head -20 || true
-  # ZoneId is omitted deliberately: PolarDB Serverless is not available
-  # in every zone (InvalidZoneID.NotFound), and VSwitchId already
-  # implies the zone — the service picks a valid one when omitted.
+  # ZoneId omitted: VSwitchId implies the zone and the service picks a
+  # serverless-capable one (InvalidZoneID.NotFound otherwise).
   aliyun polardb CreateDBCluster --region "$REGION" \
     --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
     --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
@@ -72,10 +99,11 @@ if [ -z "$CLUSTER_ID" ]; then
     --DBNodeClass polar.pg.sl.small \
     --DBClusterDescription "$CLUSTER_DESC" \
     --VPCId "$VPC_ID" --VSwitchId "$VSW_ID"
-  CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jq -r '.. | objects | .DBClusterId? // empty' | head -1)
+  CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterId? // empty')
   say "Waiting for cluster $CLUSTER_ID to become Running"
+  ST=""
   for i in $(seq 1 60); do
-    ST=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jq -r '.. | objects | .DBClusterStatus? // empty' | head -1)
+    ST=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterStatus? // empty')
     [ "$ST" = "Running" ] && break
     sleep 15
   done
@@ -103,11 +131,11 @@ done
 
 say "Whitelist (VPC CIDR)"
 aliyun polardb ModifyDBClusterAccessWhitelist --region "$REGION" --DBClusterId "$CLUSTER_ID" \
-  --SecurityIps "$VPC_CIDR" --DBClusterIPArrayName default
+  --SecurityIps "10.10.0.0/16" --DBClusterIPArrayName default
 
 say "Endpoint"
 ATTR=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID")
-DB_HOST=$(echo "$ATTR" | jq -r '.. | objects | .Address? // empty' | head -1)
+DB_HOST=$(echo "$ATTR" | jqv '.. | objects | .Address? // empty')
 [ -n "$DB_HOST" ] || DB_HOST="${CLUSTER_ID}.polardb.rds.aliyuncs.com"
 
 echo ""
@@ -118,4 +146,9 @@ echo "DB_USER=$DB_USER"
 echo "DB_PASSWORD=$PW"
 echo "DB_NAME=$DB_PROD"
 echo "DB_NAME_STAGING=$DB_STAGING"
+echo "--- s.yaml infrastructure wiring ---"
+echo "VPC_ID=$VPC_ID"
+echo "VSWITCH_ID=$VSW_ID"
+echo "SECURITY_GROUP_ID=$SG_ID"
+echo "NAS_SERVER_ADDR=${NAS_ADDR}:/"
 echo "========================================================================"
