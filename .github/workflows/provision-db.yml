@@ -56,3 +56,16 @@ jobs:
           # destroy a healthy cluster.
           RECREATE_ORPHAN: ${{ inputs.recreate_orphan || '0' }}
         run: bash scripts/provision_polardb.sh
+
+      - name: Verify FC functions reach the database
+        env:
+          FC_URL_STAGING: ${{ vars.FC_URL_STAGING }}
+          FC_URL_PROD: ${{ vars.FC_URL_PROD }}
+        run: |
+          for URL in "$FC_URL_STAGING" "$FC_URL_PROD"; do
+            [ -n "$URL" ] || continue
+            echo "healthz $URL"
+            RESP=$(curl -s -m 20 "$URL/healthz" || echo '{"db":"curl-failed"}')
+            echo "$RESP"
+            echo "$RESP" | grep -q '"db":"ok"' || { echo "FATAL: db not ok for $URL"; exit 1; }
+          done

@@ -211,6 +211,21 @@ aliyun polardb ModifyDBClusterAccessWhitelist --region "$REGION" --DBClusterId "
 say "Whitelist state after set"
 aliyun polardb DescribeDBClusterAccessWhitelist --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "describe-whitelist-failed"
 
+say "Cluster status"
+aliyun polardb DescribeDBClusters --region "$REGION" | jq -c '.. | objects | select(.DBClusterId? == "'"$CLUSTER_ID"'") | {DBClusterId, DBClusterStatus, ServerlessType, PayType, DBClusterDescription}' | head -1
+
+say "Security group egress rules"
+SG_RULES=$(aliyun ecs DescribeSecurityGroupAttribute --region "$REGION" --SecurityGroupId "$SG_ID" 2>&1 || echo "")
+echo "$SG_RULES"
+# FC's ENI reaches the DB over egress TCP/5432; a newly created SG can
+# be rule-less (default drop = the timeout signature). Add allow-all
+# egress when no egress rule exists.
+if ! echo "$SG_RULES" | jq -e '.. | objects | select(.Direction? == "egress")' >/dev/null 2>&1; then
+  say "Adding default allow-all egress rule"
+  aliyun ecs AuthorizeSecurityGroupEgress --region "$REGION" --SecurityGroupId "$SG_ID" \
+    --IpProtocol all --PortRange -1/-1 --DestCidrIp 0.0.0.0/0 --Policy accept
+fi
+
 say "Endpoint"
 # DescribeDBClusterEndpoints is the API that actually returns the
 # connection address; DescribeDBClusterAttribute may not.  Print the raw
