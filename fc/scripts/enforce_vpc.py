@@ -24,7 +24,16 @@ REGION = os.environ.get("ALIBABA_CLOUD_REGION_ID", "cn-hangzhou")
 
 
 def main() -> None:
-    client = Client(Config(region_id=REGION))
+    # Pass the OIDC-injected credentials explicitly — the SDK's default
+    # credential chain came up empty (InvalidCredentials) in CI.
+    client = Client(
+        Config(
+            region_id=REGION,
+            access_key_id=os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"],
+            access_key_secret=os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"],
+            security_token=os.environ.get("ALIBABA_CLOUD_SECURITY_TOKEN", ""),
+        )
+    )
     # UpdateFunctionRequest wraps the actual config in `body`
     # (UpdateFunctionInput) — the FC 3.0 SDK shape, verified via
     # inspect.signature on v4.7.9.
