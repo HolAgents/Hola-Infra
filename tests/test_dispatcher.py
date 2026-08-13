@@ -101,6 +101,74 @@ class TestPushRouting:
         assert d.should_dispatch is False
         assert d.skip_ack is True
 
+    def test_merge_push_skipped(self, monkeypatch):
+        monkeypatch.setattr(
+            "dispatcher.router._looks_like_merge", lambda repo, sha: True
+        )
+        ev = _make_event("push", {
+            "ref": "refs/heads/main",
+            "head_commit": {"id": "a" * 40},
+            "sender": {"login": "user"},
+            "repository": {"full_name": "HolAgents/test"},
+            "commits": [],
+        })
+        d = route(ev)
+        assert d.should_dispatch is False
+        assert d.skip_ack is True
+        assert "merge" in d.reason
+
+    def test_non_merge_push_still_dispatched(self, monkeypatch):
+        monkeypatch.setattr(
+            "dispatcher.router._looks_like_merge", lambda repo, sha: False
+        )
+        ev = _make_event("push", {
+            "ref": "refs/heads/main",
+            "head_commit": {"id": "a" * 40},
+            "sender": {"login": "user"},
+            "repository": {"full_name": "HolAgents/test"},
+            "commits": [],
+        })
+        d = route(ev)
+        assert d.should_dispatch is True
+        assert d.agent_type == "quality"
+
+    def test_merge_lookup_failure_falls_back_to_dispatch(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise OSError("gh api down")
+        monkeypatch.setattr("dispatcher.router.subprocess.run", boom)
+        ev = _make_event("push", {
+            "ref": "refs/heads/main",
+            "head_commit": {"id": "a" * 40},
+            "sender": {"login": "user"},
+            "repository": {"full_name": "HolAgents/test"},
+            "commits": [],
+        })
+        d = route(ev)
+        assert d.should_dispatch is True
+        assert d.agent_type == "quality"
+
+    def test_merge_lookup_result_parsing(self, monkeypatch):
+        import dispatcher.router as router_mod
+        calls = {}
+
+        class FakeRun:
+            returncode = 0
+            stdout = '[2, "Merge pull request #1 from x/y"]'
+
+        def fake_run(*args, **kwargs):
+            calls["args"] = args[0]
+            return FakeRun()
+
+        monkeypatch.setattr(router_mod.subprocess, "run", fake_run)
+        assert router_mod._looks_like_merge("HolAgents/test", "b" * 40) is True
+        assert calls["args"][:3] == ["gh", "api", "repos/HolAgents/test/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+
+        FakeRun.stdout = '[1, "fix: add tests (#98)"]'
+        assert router_mod._looks_like_merge("HolAgents/test", "b" * 40) is True
+
+        FakeRun.stdout = '[1, "wip: normal commit"]'
+        assert router_mod._looks_like_merge("HolAgents/test", "b" * 40) is False
+
 
 class TestCommentRouting:
     def test_mention_dispatched(self):

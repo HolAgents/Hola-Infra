@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import subprocess
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -134,6 +136,16 @@ def route(event: dict[str, Any], fc_client=None) -> RouteDecision:
     # ---- push ----
     if event_type == "push":
         if sender and sender not in skip_senders:
+            head_sha = (payload.get("head_commit") or {}).get("id", "")
+            repo_full_name = event.get("repo_full_name", "")
+            if head_sha and _looks_like_merge(repo_full_name, head_sha):
+                # The merge already passed CI + review — re-dispatching a
+                # quality agent on the resulting push would duplicate it.
+                return RouteDecision(
+                    False,
+                    reason="merge-commit push — CI+review already passed",
+                    skip_ack=True,
+                )
             return RouteDecision(True, agent_type="quality", reason="push by human")
         return RouteDecision(False, reason="push by bot", skip_ack=True)
 
@@ -279,6 +291,35 @@ def _route_ci_event(event: dict[str, Any], fc_client=None) -> RouteDecision:
 def _extract_sender(event: dict) -> Optional[str]:
     payload = event.get("payload", {})
     return payload.get("sender", {}).get("login")
+
+
+def _looks_like_merge(repo_full_name: str, head_sha: str) -> bool:
+    """True when the pushed head commit is a merge or squash-merge.
+
+    Merge commits have >1 parent; squash merges (the repo's default)
+    have a single parent but the default message ends with ``(#N)``.
+    Any lookup failure returns False — a flaky API call must never
+    silently drop a legitimate push from dispatch.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "gh", "api",
+                f"repos/{repo_full_name}/commits/{head_sha}",
+                "--jq", "[.parents|length, .commit.message]",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if out.returncode != 0:
+            return False
+        parents, message = json.loads(out.stdout)
+        if int(parents) > 1:
+            return True
+        if re.match(r"^Merge pull request", message):
+            return True
+        return bool(re.search(r"\(#\d+\)\s*$", message))
+    except Exception:  # noqa: BLE001 — classification is best-effort; any
+        return False   # failure must fall back to dispatching the push.
 
 
 def _is_mention_or_command(body: str) -> bool:
