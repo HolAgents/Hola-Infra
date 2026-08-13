@@ -60,7 +60,7 @@ echo "security_group=$SG_ID"
 # ---------------------------------------------------------------------------
 
 say "Find or create cluster"
-CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterId? // empty')
+CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
 if [ -z "$CLUSTER_ID" ]; then
   PW=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
   echo "::add-mask::$PW"
@@ -95,11 +95,11 @@ if [ -z "$CLUSTER_ID" ]; then
     N=$((N+1))
   done
   [ -n "$DB_VSW_ID" ] || { echo "FATAL: no zone accepted serverless PG"; exit 1; }
-  CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterId? // empty')
+  CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
   say "Waiting for cluster $CLUSTER_ID to become Running"
   ST=""
   for i in $(seq 1 60); do
-    ST=$(aliyun polardb DescribeDBClusters --region "$REGION" --DBClusterDescription "$CLUSTER_DESC" | jqv '.. | objects | .DBClusterStatus? // empty')
+    ST=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterDescription? == $d) | .DBClusterStatus // empty' | head -1)
     [ "$ST" = "Running" ] && break
     sleep 15
   done
