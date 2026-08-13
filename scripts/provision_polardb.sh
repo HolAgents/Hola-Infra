@@ -170,6 +170,13 @@ else
     create_cluster
   fi
 fi
+# Reused clusters skip create_cluster's zone loop — pull the zone/vswitch
+# from the cluster attributes for the wiring block (informational; the
+# VPC-level ids below are what s.yaml consumes).
+if [ -z "${DB_ZONE:-}" ]; then
+  DB_ZONE=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>/dev/null | jqv '.. | objects | .ZoneId? // empty' || echo "")
+  DB_VSW_ID=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>/dev/null | jqv '.. | objects | .VSwitchId? // empty' || echo "")
+fi
 echo "cluster=$CLUSTER_ID"
 
 say "Account"
@@ -224,8 +231,8 @@ echo "DB_NAME=$DB_PROD"
 echo "DB_NAME_STAGING=$DB_STAGING"
 echo "--- s.yaml infrastructure wiring ---"
 echo "VPC_ID=$VPC_ID"
-echo "DB_ZONE=$DB_ZONE"
-echo "DB_VSWITCH_ID=$DB_VSW_ID"
+echo "DB_ZONE=${DB_ZONE:-}"
+echo "DB_VSWITCH_ID=${DB_VSW_ID:-}"
 echo "VSWITCH_ID=$VSW_ID"
 echo "SECURITY_GROUP_ID=$SG_ID"
 echo "========================================================================"
