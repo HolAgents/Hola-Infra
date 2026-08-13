@@ -59,12 +59,14 @@ echo "security_group=$SG_ID"
 # ---------------------------------------------------------------------------
 
 say "NAS"
-NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" --Description "$NAS_DESC" | jqv '.. | objects | .FileSystemId? // empty')
+# DescribeFileSystems has no --Description filter — match client-side.
+NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" | jq -r --arg d "$NAS_DESC" '.. | objects | select(.FileSystemId? != null and (.Description? // "" | contains($d))) | .FileSystemId' | head -1)
 if [ -z "$NAS_ID" ]; then
   aliyun nas CreateFileSystem --region "$REGION" \
     --FileSystemType standard --ProtocolType NFS --StorageType Capacity \
     --Description "$NAS_DESC" --ZoneId "$ZONE_ID" >/dev/null
-  NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" --Description "$NAS_DESC" | jqv '.. | objects | .FileSystemId? // empty')
+  # DescribeFileSystems has no --Description filter — match client-side.
+NAS_ID=$(aliyun nas DescribeFileSystems --region "$REGION" | jq -r --arg d "$NAS_DESC" '.. | objects | select(.FileSystemId? != null and (.Description? // "" | contains($d))) | .FileSystemId' | head -1)
   sleep 5
 fi
 NAS_ADDR=$(aliyun nas DescribeMountTargets --region "$REGION" --FileSystemId "$NAS_ID" | jqv '.. | objects | .MountTargetDomain? // empty')
