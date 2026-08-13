@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     api_key: str                    # shared key between FC and Dispatcher
 
     # ---- database ----
-    db_path: str = "/mnt/nas/events.db"
+    db_path: str = "/mnt/nas/events.db"   # SQLite fallback (local dev / legacy NAS)
+    database_url: str = ""                # PostgreSQL DSN — when set, the PG backend is used
 
     # ---- filters (comma-separated, empty = allow all) ----
     allowed_repos: str = ""         # e.g. "HolAgents/Hola-Infra,HolAgents/foo"

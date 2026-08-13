@@ -19,6 +19,18 @@ jobs:
   test:
     name: pytest
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,12 +41,16 @@ jobs:
           pip install -r fc/requirements.txt
           pip install -r dispatcher/requirements.txt
           pip install pytest
-      - name: Run tests
+      - name: Run tests (SQLite backend)
         env:
           GITHUB_WEBHOOK_SECRET: ci_test_secret
           API_KEY: ci_test_api_key
           DB_PATH: /tmp/ci_test.db
         run: python -m pytest tests/ -v --tb=short
+      - name: Run tests (PostgreSQL backend)
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: python -m pytest tests/test_repository_pg.py -v --tb=short
 
   fc-smoke:
     name: FC deployability smoke
@@ -194,6 +210,7 @@ jobs:
         env:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET_STAGING }}
           API_KEY: ${{ secrets.API_KEY_STAGING }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
         run: s deploy -y --use-local -t s.staging.yaml
 
   deploy-production:
@@ -243,4 +260,5 @@ jobs:
         env:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           API_KEY: ${{ secrets.API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: s deploy -y --use-local
