@@ -126,6 +126,23 @@ if [ -z "$CLUSTER_ID" ]; then
 else
   say "Cluster exists: $CLUSTER_ID"
   PW=$(cat /tmp/hola_db_pw 2>/dev/null || echo "")
+  if [ -z "$PW" ] && [ -n "${HOLA_DB_NEW_PW:-}" ]; then
+    # The creating run's runner held the only copy of the password and it
+    # is gone; the caller supplied a new one (via a GitHub secret) —
+    # rotate the account password in place instead of deleting the
+    # cluster. (Repo is public, so the value travels only through
+    # secrets, never logs.)
+    say "Rotating account password on existing cluster"
+    PW="$HOLA_DB_NEW_PW"
+    echo "::add-mask::$PW"
+    if aliyun polardb ModifyAccountPassword --region "$REGION" --DBClusterId "$CLUSTER_ID" \
+        --AccountName "$DB_USER" --AccountPassword "$PW" >/dev/null 2>&1; then
+      echo "$PW" > /tmp/hola_db_pw
+    else
+      say "Rotation failed — falling back to recreate"
+      PW=""
+    fi
+  fi
   if [ -z "$PW" ]; then
     # Orphan cluster from an interrupted run: the password only lives in
     # the creating run's runner temp file. The ledger is empty — delete
@@ -178,13 +195,15 @@ say "Endpoint"
 # connection address; DescribeDBClusterAttribute may not.  Print the raw
 # responses so a failure here is diagnosable from the run log, and
 # hard-FATAL instead of guessing a hostname that may not resolve.
+# jqv (not bare jq) so empty-string values can't bypass the `//`
+# fallthrough — `//` only falls back on null/false (OCR finding, PR #67).
 EP_RAW=$(aliyun polardb DescribeDBClusterEndpoints --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "")
 echo "endpoints-raw: $EP_RAW"
-DB_HOST=$(echo "$EP_RAW" | jq -r '.. | objects | (.Address? // .ConnectionString? // empty)' 2>/dev/null | head -1 || echo "")
+DB_HOST=$(echo "$EP_RAW" | jqv '.Address? // .ConnectionString? // empty' || echo "")
 if [ -z "$DB_HOST" ]; then
   EP_RAW=$(aliyun polardb DescribeDBClusterAttribute --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "")
   echo "attr-raw: $EP_RAW"
-  DB_HOST=$(echo "$EP_RAW" | jq -r '.. | objects | (.Address? // .ConnectionString? // empty)' 2>/dev/null | head -1 || echo "")
+  DB_HOST=$(echo "$EP_RAW" | jqv '.Address? // .ConnectionString? // empty' || echo "")
 fi
 [ -n "$DB_HOST" ] || { echo "FATAL: no endpoint address found"; exit 1; }
 
