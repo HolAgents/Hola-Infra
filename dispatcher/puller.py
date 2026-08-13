@@ -87,8 +87,8 @@ def _run_agent(
         f"{identity_info}"
         f"Use gh CLI to interact with GitHub as needed.\n\n"
         f"IMPORTANT: When you are done (code committed and pushed), "
-        f"output this exact line as your last message:\n"
-        f'##HOLA_RESULT:{{"commit_sha":"<full commit SHA>"}}##'
+        f"output this exact tag as your last message:\n"
+        f"<CommitSha>REPLACE_WITH_FULL_40_CHAR_SHA</CommitSha>"
     )
 
     ident_name = identity.identity_name if identity else None
@@ -133,8 +133,19 @@ def _run_agent(
 
 
 def _parse_commit_marker(stdout: str) -> str | None:
-    """Parse ``##HOLA_RESULT:{\"commit_sha\":\"...\"}##`` from agent output."""
-    m = re.search(r'##HOLA_RESULT:\s*(\{[^}]+\})\s*##', stdout)
+    """Parse the commit SHA from agent output.
+
+    Accepts both the current ``<CommitSha>...</CommitSha>`` tag (the
+    format the runbook skills instruct — Hola-Skill#1) and the legacy
+    ``##HOLA_RESULT:{"commit_sha":"..."}##`` marker, which is removed
+    after a transition release (Hola-Infra#31).
+    """
+    # New tag format (preferred)
+    m = re.search(r"<CommitSha>\s*([0-9a-fA-F]{40})\s*</CommitSha>", stdout)
+    if m:
+        return m.group(1)
+    # Legacy format
+    m = re.search(r"##HOLA_RESULT:\s*(\{[^}]+\})\s*##", stdout)
     if not m:
         return None
     try:
@@ -221,8 +232,8 @@ def _resume_agent(ctx: ResumeContext, event: dict[str, Any]) -> dict[str, Any]:
         f"CI workflow failed for commit {ctx.commit_sha[:7]}.\n"
         f"Error: {ctx.error_message}\n\n"
         f"Fix the issue, commit your changes, and push.\n"
-        f"IMPORTANT: When done, output this exact line:\n"
-        f'##HOLA_RESULT:{{"commit_sha":"<full commit SHA>"}}##'
+        f"IMPORTANT: When done, output this exact tag as your last message:\n"
+        f"<CommitSha>REPLACE_WITH_FULL_40_CHAR_SHA</CommitSha>"
     )
     try:
         result = subprocess.run(
@@ -260,8 +271,8 @@ def _cold_start_agent(
         f"CI Error: {ctx.error_message}\n\n"
         f"Fix the issue, commit, and push. "
         f"The commit author should remain '{identity_name}'.\n"
-        f"IMPORTANT: When done, output this exact line:\n"
-        f'##HOLA_RESULT:{{"commit_sha":"<full commit SHA>"}}##'
+        f"IMPORTANT: When done, output this exact tag as your last message:\n"
+        f"<CommitSha>REPLACE_WITH_FULL_40_CHAR_SHA</CommitSha>"
     )
     return _run_agent(event, "triage", identity, custom_prompt=prompt)
 
