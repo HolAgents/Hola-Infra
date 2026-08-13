@@ -206,8 +206,9 @@ for DB in "$DB_PROD" "$DB_STAGING"; do
 done
 
 say "Whitelist (VPC CIDR)"
+WHITELIST_CIDR=${WHITELIST_CIDR:-10.10.0.0/16}
 aliyun polardb ModifyDBClusterAccessWhitelist --region "$REGION" --DBClusterId "$CLUSTER_ID" \
-  --SecurityIps "10.10.0.0/16" --DBClusterIPArrayName default
+  --SecurityIps "$WHITELIST_CIDR" --DBClusterIPArrayName default
 say "Whitelist state after set"
 aliyun polardb DescribeDBClusterAccessWhitelist --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "describe-whitelist-failed"
 
@@ -230,6 +231,12 @@ if ! echo "$SG_RULES" | jq -e '.. | objects | select(.Direction? == "egress")' >
   aliyun ecs AuthorizeSecurityGroupEgress --region "$REGION" --SecurityGroupId "$SG_ID" \
     --IpProtocol udp --PortRange 1/65535 --DestCidrIp 0.0.0.0/0 --Policy accept
 fi
+
+say "Deployed FC function vpcConfig"
+# Verifies the deploy actually wired the user VPC + SG into the function
+# (FC 3.0 may need a service name depending on the CLI's API version —
+# print raw output so failures are visible).
+aliyun fc GetFunction --region "$REGION" --functionName webhook-ingest 2>&1 | jq -c '{functionName, vpcConfig}' 2>/dev/null || echo "fc-getfunction-failed"
 
 say "Endpoint"
 # DescribeDBClusterEndpoints is the API that actually returns the
