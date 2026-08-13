@@ -282,3 +282,22 @@ def test_human_comment_not_ocr_trigger():
     }
     d = route(ev)
     assert d.ocr_trigger is None
+
+
+def test_ci_failure_retry_cap_escalates():
+    """retry_count >= max_ci_resumes → escalate instead of resume."""
+    from dispatcher.config import get_settings
+    settings = get_settings()
+    ev = _wf_event(conclusion="failure", commit_sha="abc123")
+    ev["retry_count"] = settings.max_ci_resumes
+    fc = _FakeFC(task={
+        "id": 7, "session_id": "sess-1", "identity_name": "holagent001",
+        "target_id": "claude-code", "claim_token": "orig-token",
+        "payload": {"issue": {"number": 3}},
+    })
+    d = route(ev, fc_client=fc)
+    assert d.should_dispatch is False
+    assert d.sync_task is not None
+    assert d.sync_task.task_status == "failed"
+    assert d.sync_task.event_id == 7
+    assert d.sync_task.claim_token == "orig-token"

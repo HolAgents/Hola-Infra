@@ -183,27 +183,36 @@ def _sync_task_state(event: dict[str, Any], decision: RouteDecision, fc: FCClien
         logger.warning("sync_task without repo/item: %s", decision.reason)
         return
 
-    # Find the original task: the work event for this (repo, item) that
-    # carries a session (i.e. an agent was dispatched for it).
+    # Find the original task: direct target (by-commit lookups) or the
+    # work event for this (repo, item) that carries a session.
     target = None
-    try:
-        events = fc.query_events(repo=repo, limit=200)
-    except Exception as exc:
-        logger.error("sync_task query failed: %s", exc)
-        return
-    for e in events:
-        if e.get("event_type") != "issues":
-            continue
-        p = e.get("payload") or {}
-        n = ((p.get("issue") or {}).get("number")
-             or (p.get("pull_request") or {}).get("number"))
-        if n == item_number and e.get("session_id"):
-            target = e
-            break
+    if sync.event_id:
+        target = {"id": sync.event_id, "claim_token": sync.claim_token}
+    else:
+        try:
+            events = fc.query_events(repo=repo, limit=200)
+        except Exception as exc:
+            logger.error("sync_task query failed: %s", exc)
+            return
+        for e in events:
+            if e.get("event_type") != "issues":
+                continue
+            p = e.get("payload") or {}
+            n = ((p.get("issue") or {}).get("number")
+                 or (p.get("pull_request") or {}).get("number"))
+            if n == item_number and e.get("session_id"):
+                target = e
+                break
 
     if target is None:
         logger.warning("sync_task: no original task for %s item %s", repo, item_number)
         return
+
+    # M4: terminal PR close releases the workspace (merged or rejected).
+    if sync.task_status in ("done", "released") and item_number:
+        archived = workspace.release(repo, item_number)
+        if archived:
+            logger.info("workspace released: %s", archived)
 
     patch = {
         "claim_token": target.get("claim_token"),
