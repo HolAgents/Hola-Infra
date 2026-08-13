@@ -44,7 +44,11 @@ def healthz():
     """Return service health including database connectivity."""
     try:
         conn = get_connection()
-        conn.execute("SELECT 1")
+        # sqlite3 connections expose .execute directly; psycopg2 needs a
+        # cursor (this difference was masked by the connect timeout until
+        # the VPC path came up).
+        db = conn.cursor() if hasattr(conn, "cursor") else conn
+        db.execute("SELECT 1")
         conn.close()
         db_status = "connected"
     except Exception as exc:
