@@ -13,6 +13,11 @@ on:
         options:
           - 'false'
           - 'true'
+      whitelist_cidr:
+        description: 'Whitelist CIDR to set on the cluster (diagnostics: 0.0.0.0/0)'
+        required: false
+        default: '10.10.0.0/16'
+        type: string
 
 permissions:
   id-token: write
@@ -55,6 +60,7 @@ jobs:
           # Recreate only on explicit opt-in — a missing secret must not
           # destroy a healthy cluster.
           RECREATE_ORPHAN: ${{ inputs.recreate_orphan || '0' }}
+          WHITELIST_CIDR: ${{ inputs.whitelist_cidr || '10.10.0.0/16' }}
         run: bash scripts/provision_polardb.sh
 
       - name: Verify FC functions reach the database
@@ -64,8 +70,12 @@ jobs:
         run: |
           for URL in "$FC_URL_STAGING" "$FC_URL_PROD"; do
             [ -n "$URL" ] || continue
-            echo "healthz $URL"
-            RESP=$(curl -s -m 20 "$URL/healthz" || echo '{"db":"curl-failed"}')
-            echo "$RESP"
-            echo "$RESP" | grep -q '"db":"ok"' || { echo "FATAL: db not ok for $URL"; exit 1; }
+            for ATTEMPT in 1 2 3; do
+              echo "healthz $URL (attempt $ATTEMPT)"
+              RESP=$(curl -s -m 20 "$URL/healthz" || echo '{"db":"curl-failed"}')
+              echo "$RESP"
+              echo "$RESP" | grep -q '"db":"ok"' && break
+              [ "$ATTEMPT" = "3" ] && { echo "FATAL: db not ok for $URL"; exit 1; }
+              sleep 5
+            done
           done
