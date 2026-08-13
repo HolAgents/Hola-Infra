@@ -4,6 +4,15 @@ name: Provision PolarDB
 
 on:
   workflow_dispatch:
+    inputs:
+      recreate_orphan:
+        description: 'Delete + recreate an existing cluster whose password is lost'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 permissions:
   id-token: write
@@ -43,4 +52,7 @@ jobs:
           # the cluster (the creating run's password dies with its runner;
           # the repo is public so the value travels only via secrets).
           HOLA_DB_NEW_PW: ${{ secrets.HOLA_DB_TMP_PW }}
+          # Recreate only on explicit opt-in — a missing secret must not
+          # destroy a healthy cluster.
+          RECREATE_ORPHAN: ${{ inputs.recreate_orphan || '0' }}
         run: bash scripts/provision_polardb.sh

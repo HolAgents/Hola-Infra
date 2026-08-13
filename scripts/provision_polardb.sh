@@ -149,25 +149,32 @@ else
     fi
   fi
   if [ -z "$PW" ]; then
-    # Orphan cluster from an interrupted run: the password only lives in
-    # the creating run's runner temp file. The ledger is empty — delete
-    # and recreate so the password and account are created together.
-    say "No stored password for existing cluster — recreating"
-    # Delete EVERY orphan (repeated failed runs can leave several) —
-    # deleting only the first match would leave leftovers that poison
-    # later lookups.
-    for ORPHAN_ID in $(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId'); do
-      say "Deleting orphan cluster $ORPHAN_ID"
-      aliyun polardb DeleteDBCluster --region "$REGION" --DBClusterId "$ORPHAN_ID" >/dev/null
-    done
-    for i in $(seq 1 30); do
-      GONE=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
-      [ -z "$GONE" ] && break
-      sleep 10
-    done
-    [ -z "$GONE" ] || { echo "FATAL: orphan cluster still present after delete"; exit 1; }
-    CLUSTER_ID=""
-    create_cluster
+    if [ "${RECREATE_ORPHAN:-0}" = "1" ]; then
+      # Explicit opt-in: delete + recreate a cluster whose password is
+      # lost (never the default — a missing secret must not destroy a
+      # healthy cluster).
+      say "RECREATE_ORPHAN=1 — recreating"
+      # Delete EVERY orphan (repeated failed runs can leave several) —
+      # deleting only the first match would leave leftovers that poison
+      # later lookups.
+      for ORPHAN_ID in $(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId'); do
+        say "Deleting orphan cluster $ORPHAN_ID"
+        aliyun polardb DeleteDBCluster --region "$REGION" --DBClusterId "$ORPHAN_ID" >/dev/null
+      done
+      for i in $(seq 1 30); do
+        GONE=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
+        [ -z "$GONE" ] && break
+        sleep 10
+      done
+      [ -z "$GONE" ] || { echo "FATAL: orphan cluster still present after delete"; exit 1; }
+      CLUSTER_ID=""
+      create_cluster
+    else
+      # No stored password and no caller-supplied one: keep the cluster
+      # and continue (diagnostics still run; account creation will FATAL
+      # only if the account is actually missing).
+      say "No stored password — keeping cluster (set HOLA_DB_TMP_PW to rotate, RECREATE_ORPHAN=1 to recreate)"
+    fi
   fi
 fi
 # Reused clusters skip create_cluster's zone loop — pull the zone/vswitch
@@ -201,6 +208,8 @@ done
 say "Whitelist (VPC CIDR)"
 aliyun polardb ModifyDBClusterAccessWhitelist --region "$REGION" --DBClusterId "$CLUSTER_ID" \
   --SecurityIps "10.10.0.0/16" --DBClusterIPArrayName default
+say "Whitelist state after set"
+aliyun polardb DescribeDBClusterAccessWhitelist --region "$REGION" --DBClusterId "$CLUSTER_ID" 2>&1 || echo "describe-whitelist-failed"
 
 say "Endpoint"
 # DescribeDBClusterEndpoints is the API that actually returns the
