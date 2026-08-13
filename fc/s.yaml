@@ -19,8 +19,7 @@ services:
       region: cn-hangzhou
       service:
         name: hola-webhook-service
-        description: GitHub webhook receiver with SQLite on NAS
-        nasConfig: auto
+        description: GitHub webhook receiver with PostgreSQL on PolarDB
         internetAccess: true
       function:
         name: webhook-ingest
@@ -29,6 +28,20 @@ services:
         memorySize: 256
         timeout: 30
         instanceConcurrency: 1
+        # Dedicated user VPC (the FC-managed DefaultNas VPC rejects user
+        # resources — Hola-Infra#36). Values come from the provisioning
+        # workflow output (repo variables).
+        vpcConfig:
+          vpcId: ${env.VPC_ID}
+          securityGroupId: ${env.SECURITY_GROUP_ID}
+          vSwitchIds:
+            - ${env.VSWITCH_ID}
+        nasConfig:
+          userId: 10003
+          groupId: 10003
+          mountPoints:
+            - serverAddr: ${env.NAS_SERVER_ADDR}
+              mountDir: /mnt/auto
         environmentVariables:
           GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
           API_KEY: ${env.API_KEY}

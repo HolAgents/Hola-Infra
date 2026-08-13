@@ -211,6 +211,10 @@ jobs:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET_STAGING }}
           API_KEY: ${{ secrets.API_KEY_STAGING }}
           DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+          VPC_ID: ${{ vars.VPC_ID }}
+          VSWITCH_ID: ${{ vars.VSWITCH_ID }}
+          SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
+          NAS_SERVER_ADDR: ${{ vars.NAS_SERVER_ADDR }}
         run: s deploy -y --use-local -t s.staging.yaml
 
   deploy-production:
@@ -261,4 +265,8 @@ jobs:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           API_KEY: ${{ secrets.API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          VPC_ID: ${{ vars.VPC_ID }}
+          VSWITCH_ID: ${{ vars.VSWITCH_ID }}
+          SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
+          NAS_SERVER_ADDR: ${{ vars.NAS_SERVER_ADDR }}
         run: s deploy -y --use-local
