@@ -62,9 +62,16 @@ class FCClient:
     # Query (for dedup checks)
     # ------------------------------------------------------------------
 
-    def query_events(self, status: str, repo: Optional[str] = None) -> list[dict]:
-        """GET /api/events?status=... — list events."""
-        params: dict[str, Any] = {"status": status, "limit": 200}
+    def query_events(
+        self,
+        status: str = "",
+        repo: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """GET /api/events?status=... — list events (status optional)."""
+        params: dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
         if repo:
             params["repo"] = repo
         resp = self._client.get(f"{self._base}/api/events", params=params)

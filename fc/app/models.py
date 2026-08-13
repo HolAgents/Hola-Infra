@@ -55,7 +55,7 @@ class AckItem(BaseModel):
     agent_id: Optional[str] = None
     message: Optional[str] = None
     # ---- CI Resume 新增 ----
-    task_status: Optional[str] = None    # pushed | ci_failed | ci_passed | done
+    task_status: Optional[str] = None    # planned | pr_opened | pushed | ci_failed | ci_passed | done | blocked | released
     commit_sha: Optional[str] = None
     session_id: Optional[str] = None
     identity_name: Optional[str] = None

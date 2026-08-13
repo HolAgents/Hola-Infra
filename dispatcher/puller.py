@@ -172,6 +172,51 @@ def _parse_commit_marker(stdout: str) -> str | None:
         return None
 
 
+def _sync_task_state(event: dict[str, Any], decision: RouteDecision, fc: FCClient) -> None:
+    """Patch the ORIGINAL task event with state derived from an
+    agent-produced signal (plan comment / agent PR) — M2 closed loop."""
+    sync = decision.sync_task
+    repo = event.get("repo_full_name", "")
+    item_number = sync.item_number or _extract_item_number(event)
+    if not repo or not item_number:
+        logger.warning("sync_task without repo/item: %s", decision.reason)
+        return
+
+    # Find the original task: the work event for this (repo, item) that
+    # carries a session (i.e. an agent was dispatched for it).
+    target = None
+    try:
+        events = fc.query_events(repo=repo, limit=200)
+    except Exception as exc:
+        logger.error("sync_task query failed: %s", exc)
+        return
+    for e in events:
+        if e.get("event_type") != "issues":
+            continue
+        p = e.get("payload") or {}
+        n = ((p.get("issue") or {}).get("number")
+             or (p.get("pull_request") or {}).get("number"))
+        if n == item_number and e.get("session_id"):
+            target = e
+            break
+
+    if target is None:
+        logger.warning("sync_task: no original task for %s item %s", repo, item_number)
+        return
+
+    patch = {
+        "claim_token": target.get("claim_token"),
+        "task_status": sync.task_status,
+    }
+    if sync.commit_sha:
+        patch["commit_sha"] = sync.commit_sha
+    try:
+        fc.patch_event(target["id"], patch)
+        logger.info("synced task %s → %s", target["id"], sync.task_status)
+    except Exception as exc:
+        logger.error("sync_task patch failed: %s", exc)
+
+
 def _ack_skip(event: dict[str, Any], decision: RouteDecision, fc: FCClient) -> None:
     """Ack as completed for events we intentionally skip."""
     fc.ack([{
@@ -375,6 +420,18 @@ def run_loop() -> None:
                     "event %d, type=%s, dispatch=%s, reason=%s",
                     event["id"], event["event_type"], decision.should_dispatch, decision.reason,
                 )
+
+                if decision.sync_task:
+                    # M2: agent-produced signal (plan comment / agent PR)
+                    # → patch the original task, no agent dispatch.
+                    _sync_task_state(event, decision, fc)
+                    ack_results.append({
+                        "event_id": event["id"],
+                        "claim_token": event["claim_token"],
+                        "status": "completed",
+                        "message": decision.reason,
+                    })
+                    continue
 
                 if decision.skip_ack:
                     # Move to Done on Kanban

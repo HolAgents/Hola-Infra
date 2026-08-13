@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -28,12 +29,22 @@ class ResumeContext:
 
 
 @dataclass
+class SyncTask:
+    """State sync for an EXISTING task — no agent dispatch, the puller
+    patches the original task event instead (M2)."""
+    task_status: str                       # planned | pr_opened | ...
+    commit_sha: str | None = None
+    item_number: int | None = None         # override when derived from branch name
+
+
+@dataclass
 class RouteDecision:
     should_dispatch: bool
     agent_type: str = ""
     reason: str = ""
     skip_ack: bool = False    # True → ack as "completed" immediately
     resume_context: ResumeContext | None = None  # CI resume only
+    sync_task: SyncTask | None = None             # state sync (no dispatch)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +91,23 @@ def route(event: dict[str, Any], fc_client=None) -> RouteDecision:
     if event_type == "pull_request":
         action = payload.get("action", "")
         if action == "opened":
+            pr = payload.get("pull_request") or {}
+            branch = (pr.get("head") or {}).get("ref", "")
+            m = re.match(r"hola/issue-(\d+)", branch)
+            if m:
+                # An agent's own PR for a known task — sync state instead
+                # of dispatching another agent at it.
+                head_sha = (pr.get("head") or {}).get("sha", "")
+                return RouteDecision(
+                    False,
+                    reason=f"agent PR for issue {m.group(1)} — sync task state",
+                    skip_ack=True,
+                    sync_task=SyncTask(
+                        "pr_opened",
+                        commit_sha=head_sha or None,
+                        item_number=int(m.group(1)),
+                    ),
+                )
             return RouteDecision(True, agent_type="review", reason="PR opened")
         if action == "closed":
             return RouteDecision(False, reason="PR closed — no action needed", skip_ack=True)
@@ -95,8 +123,16 @@ def route(event: dict[str, Any], fc_client=None) -> RouteDecision:
     if event_type == "issue_comment":
         action = payload.get("action", "")
         comment_body = payload.get("comment", {}).get("body", "")
-        if action == "created" and _is_mention_or_command(comment_body):
-            return RouteDecision(True, agent_type="response", reason="mention/command")
+        if action == "created":
+            if comment_body.lstrip().startswith("<!-- hola-plan -->"):
+                return RouteDecision(
+                    False,
+                    reason="plan comment — sync task state",
+                    skip_ack=True,
+                    sync_task=SyncTask("planned"),
+                )
+            if _is_mention_or_command(comment_body):
+                return RouteDecision(True, agent_type="response", reason="mention/command")
         return RouteDecision(False, reason="comment — no mention", skip_ack=True)
 
     # ---- workflow_run (CI/CD) ----
