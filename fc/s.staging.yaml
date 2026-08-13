@@ -34,22 +34,15 @@ services:
           securityGroupId: ${env.SECURITY_GROUP_ID}
           vSwitchIds:
             - ${env.VSWITCH_ID}
-        nasConfig:
-          userId: 10003
-          groupId: 10003
-          mountPoints:
-            - serverAddr: ${env.NAS_SERVER_ADDR}
-              mountDir: /mnt/auto
         environmentVariables:
           GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
           API_KEY: ${env.API_KEY}
           # PostgreSQL backend (PolarDB Serverless) — when unset, the
           # SQLite fallback at DB_PATH is used instead.
           DATABASE_URL: ${env.DATABASE_URL}
-          # FC3 nasConfig:auto mounts the NAS at /mnt/auto (NOT /mnt/nas).
-          # /mnt/nas was ephemeral instance storage — data vanished on
-          # every cold start.
-          DB_PATH: /mnt/auto/events.db
+          # SQLite FALLBACK ONLY — the ledger lives in PolarDB when
+          # DATABASE_URL is set; this path is ephemeral instance storage.
+          DB_PATH: /tmp/events-fallback.db
           LOG_LEVEL: INFO
       triggers:
         - type: http
