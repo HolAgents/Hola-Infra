@@ -234,10 +234,13 @@ fi
 
 say "Deployed FC function vpcConfig"
 # Verifies the deploy actually wired the user VPC + SG into the function.
-# Print the RAW response (healthz shows src=21.0.17.103 — the instance
+# Print the RAW responses (healthz shows src=21.0.17.103 — the instance
 # has no VPC path, so either vpcConfig was never applied or the ENI
-# never attached; this call reads the deployed truth).
-aliyun fc GetFunction --region "$REGION" --functionName webhook-ingest 2>&1 || echo "fc-getfunction-exit=$?"
+# never attached; these calls read the deployed truth).
+# The CLI's fc plugin defaults to the FC 2.0 API (2021-04-06) where
+# FC 3.0 functions don't exist — pin the FC 3.0 API version explicitly.
+aliyun fc GetFunction --region "$REGION" --version 2023-03-30 --functionName webhook-ingest 2>&1 || echo "fc-getfunction-exit=$?"
+aliyun fc ListFunctions --region "$REGION" --version 2023-03-30 2>&1 || echo "fc-listfunctions-exit=$?"
 
 say "Endpoint"
 # DescribeDBClusterEndpoints is the API that actually returns the
