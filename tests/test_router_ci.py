@@ -216,3 +216,69 @@ def test_ci_error_message():
     assert "test-suite" in msg
     assert "failure" in msg
     assert "https://github.com/example/actions/runs/42" in msg
+
+
+# ---------------------------------------------------------------------------
+# M3: check_run head_sha, OCR comments, CI-success sync
+# ---------------------------------------------------------------------------
+
+
+def test_check_run_uses_top_level_head_sha():
+    """Real check_run payloads carry head_sha at the top level."""
+    ev = _cr_event(commit_sha="abc123")
+    ev["payload"]["check_run"]["head_sha"] = "real-sha-40"
+    fc = _FakeFC(task={
+        "id": 7, "session_id": "sess-1", "identity_name": "holagent001",
+        "target_id": "claude-code", "claim_token": "orig-token",
+        "payload": {"issue": {"number": 3}},
+    })
+    d = route(ev, fc_client=fc)
+    assert d.agent_type == "resume"
+    assert d.resume_context.commit_sha == "real-sha-40"
+    assert d.resume_context.claim_token == "orig-token"
+    assert d.resume_context.item_number == 3
+
+
+def test_ci_success_syncs_ci_passed():
+    ev = _wf_event(conclusion="success", commit_sha="abc123")
+    fc = _FakeFC(task={
+        "id": 7, "session_id": "sess-1", "identity_name": "holagent001",
+        "target_id": "claude-code", "claim_token": "t",
+        "payload": {"issue": {"number": 3}},
+    })
+    d = route(ev, fc_client=fc)
+    assert d.should_dispatch is False
+    assert d.sync_task is not None
+    assert d.sync_task.task_status == "ci_passed"
+    assert d.sync_task.event_id == 7
+
+
+def test_ocr_comment_routes_to_trigger():
+    ev = {
+        "event_type": "issue_comment",
+        "repo_full_name": "HolAgents/test",
+        "payload": {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"body": "<!-- ocr-123-1-abc -->\n[bug · medium]\n..."},
+            "sender": {"login": "github-actions[bot]"},
+        },
+    }
+    d = route(ev)
+    assert d.should_dispatch is False
+    assert d.ocr_trigger == 5
+
+
+def test_human_comment_not_ocr_trigger():
+    ev = {
+        "event_type": "issue_comment",
+        "repo_full_name": "HolAgents/test",
+        "payload": {
+            "action": "created",
+            "issue": {"number": 5},
+            "comment": {"body": "<!-- ocr-123 -->"},
+            "sender": {"login": "someone"},
+        },
+    }
+    d = route(ev)
+    assert d.ocr_trigger is None

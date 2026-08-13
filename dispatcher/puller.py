@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import Any
 from dispatcher.config import get_settings
 from dispatcher.fc_client import FCClient
 from dispatcher.kanban import KanbanClient
-from dispatcher.identity import resolve, get_current_target
+from dispatcher.identity import resolve
 from dispatcher.router import ResumeContext, RouteDecision, route
 from dispatcher import hola_switch, workspace
 
@@ -235,10 +236,56 @@ def _ack_skip(event: dict[str, Any], decision: RouteDecision, fc: FCClient) -> N
 def _dispatch(
     event: dict[str, Any],
     decision: RouteDecision,
-    fc: FCClient,
+    fc: FCClient | None,
 ) -> dict[str, Any]:
-    """Execute a dispatch decision.  Returns an ack-compatible result dict."""
+    """Execute a dispatch decision.  Returns an ack-compatible result dict.
+
+    A heartbeat thread keeps the claim lease alive while the agent runs
+    (M3 — long tasks must not hit the 15-min TTL requeue).
+    """
+    stop = threading.Event()
+    if fc is not None:
+        threading.Thread(
+            target=_heartbeat_loop, args=(fc, event, stop), daemon=True,
+        ).start()
+    try:
+        return _dispatch_inner(event, decision, fc)
+    finally:
+        stop.set()
+
+
+def _ci_dedup_key(event: dict[str, Any], decision: RouteDecision) -> str:
+    """Unique key per (failing commit, CI run) — coalesces the
+    workflow_run + check_run burst of a single failure (M3)."""
+    ctx = decision.resume_context
+    ci_obj = (
+        (event.get("payload") or {}).get("workflow_run")
+        or (event.get("payload") or {}).get("check_run")
+        or {}
+    )
+    ci_id = ci_obj.get("id") or event["id"]
+    return f"{ctx.commit_sha}:{ci_id}"
+
+
+def _heartbeat_loop(fc: FCClient, event: dict[str, Any], stop: threading.Event) -> None:
+    """Refresh the claim lease every 60s until stopped."""
+    while not stop.wait(60):
+        try:
+            fc.heartbeat(event["id"], event["claim_token"])
+        except Exception as exc:  # noqa: BLE001 — keep the lease thread alive
+            logger.warning("heartbeat failed: %s", exc)
+
+
+def _dispatch_inner(
+    event: dict[str, Any],
+    decision: RouteDecision,
+    fc: FCClient | None,
+) -> dict[str, Any]:
     repo = event.get("repo_full_name", "")
+
+    # ---- OCR review trigger: resolve PR head sha → resume original task ----
+    if decision.ocr_trigger:
+        return _resume_from_ocr(decision.ocr_trigger, event, fc)
 
     # ---- ordinary dispatch ----
     if decision.agent_type != "resume":
@@ -248,6 +295,12 @@ def _dispatch(
                 "status": "failed",
                 "message": f"no identity for {decision.agent_type}",
             }
+        # Human comment on an item with an active workspace → resume the
+        # original task instead of spawning a fresh response agent.
+        if decision.agent_type == "response":
+            item_number = _extract_item_number(event)
+            if item_number and workspace.is_active(repo, item_number):
+                return _resume_from_comment(event, fc)
         item_number = _extract_item_number(event)
         cwd = env = None
         if item_number:
@@ -263,6 +316,18 @@ def _dispatch(
             "status": "failed",
             "message": "resume agent_type without resume_context",
         }
+    return _execute_resume(ctx, event, fc)
+
+
+def _execute_resume(
+    ctx: ResumeContext,
+    event: dict[str, Any],
+    fc: FCClient | None,
+    failure_status: str | None = "ci_failed",
+) -> dict[str, Any]:
+    """Resume the original task in its workspace: attempt hot resume,
+    fall back to cold start on failure (#39 decision 4)."""
+    repo = event.get("repo_full_name", "")
 
     # Workspace + identity env: derived from the original task (do NOT
     # rewrite the task metadata on resume — the original values win).
@@ -271,34 +336,113 @@ def _dispatch(
         cwd = str(workspace.ensure(repo, ctx.item_number))
         env = {**os.environ, **hola_switch.resolve_identity_env(ctx.identity_name)}
 
-    # 1. detect re-bind
-    current_target = get_current_target(ctx.identity_name)
-    target_changed = (current_target != ctx.target_id)
-    session_available = _check_session_exists(ctx.target_id, ctx.session_id)
+    if fc is not None and failure_status:
+        fc.patch_event(ctx.original_event_id, {
+            "claim_token": ctx.claim_token,
+            "task_status": failure_status,
+        })
 
-    # 2. choose strategy
-    if not target_changed and session_available:
-        logger.info("Hot resume: target=%s session=%s", ctx.target_id, ctx.session_id[:12])
-        result = _resume_agent(ctx, event, cwd=cwd, env=env)
-    else:
-        reason = "target changed" if target_changed else "session not found"
+    result = _resume_agent(ctx, event, cwd=cwd, env=env)
+    if result.get("status") != "completed":
         logger.info(
-            "Cold start: %s (was %s, now %s)",
-            reason, ctx.target_id, current_target,
+            "hot resume failed (%s) — cold start fallback",
+            str(result.get("message", ""))[:80],
         )
         identity = resolve("triage", repo)
         result = _cold_start_agent(ctx, identity, event, cwd=cwd, env=env)
 
-    # 3. update original task event
-    if result.get("status") == "completed":
+    if result.get("status") == "completed" and fc is not None:
         new_sha = result.get("commit_sha", "")
         fc.patch_event(ctx.original_event_id, {
-            "claim_token": event["claim_token"],
+            "claim_token": ctx.claim_token,
             "task_status": "pushed",
             "commit_sha": new_sha or ctx.commit_sha,
         })
 
     return result
+
+
+def _find_original_task(fc: FCClient | None, repo: str, item_number: int) -> dict | None:
+    """Locate the original work event for (repo, item) with a session."""
+    if fc is None:
+        return None
+    try:
+        events = fc.query_events(repo=repo, limit=200)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("find original task failed: %s", exc)
+        return None
+    for e in events:
+        if e.get("event_type") != "issues":
+            continue
+        p = e.get("payload") or {}
+        n = ((p.get("issue") or {}).get("number")
+             or (p.get("pull_request") or {}).get("number"))
+        if n == item_number and e.get("session_id"):
+            return e
+    return None
+
+
+def _resume_from_ocr(pr_number: int, event: dict[str, Any], fc: FCClient | None) -> dict[str, Any]:
+    """OpenCodeReview feedback on a PR → resume the task that opened it."""
+    try:
+        out = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "headRefOid"],
+            capture_output=True, text=True, timeout=30,
+        )
+        head_sha = json.loads(out.stdout).get("headRefOid", "")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("ocr resume: gh pr view failed: %s", exc)
+        return {"status": "failed", "message": f"ocr pr lookup failed: {exc}"}
+
+    if not head_sha or fc is None:
+        return {"status": "failed", "message": "ocr resume: no head sha"}
+
+    task = fc.query_by_commit(head_sha)
+    if not task or not task.get("session_id"):
+        return {"status": "failed", "message": "ocr resume: no task for pr head"}
+
+    task_payload = task.get("payload") or {}
+    item_number = (
+        (task_payload.get("issue") or {}).get("number")
+        or (task_payload.get("pull_request") or {}).get("number")
+    )
+    comment_body = (event.get("payload") or {}).get("comment", {}).get("body", "")[:500]
+    ctx = ResumeContext(
+        identity_name=task.get("identity_name") or "",
+        target_id=task.get("target_id") or "claude-code",
+        session_id=task["session_id"],
+        commit_sha=head_sha,
+        error_message=f"OpenCodeReview feedback:\n{comment_body}",
+        original_event_id=task["id"],
+        item_number=item_number,
+        claim_token=task.get("claim_token") or "",
+    )
+    return _execute_resume(ctx, event, fc, failure_status=None)
+
+
+def _resume_from_comment(event: dict[str, Any], fc: FCClient | None) -> dict[str, Any]:
+    """Human comment on an item with an active workspace → resume its task."""
+    repo = event.get("repo_full_name", "")
+    item_number = _extract_item_number(event)
+    if not item_number:
+        return {"status": "failed", "message": "comment resume: no item number"}
+
+    task = _find_original_task(fc, repo, item_number)
+    if task is None:
+        return {"status": "failed", "message": "comment resume: no original task"}
+
+    comment_body = (event.get("payload") or {}).get("comment", {}).get("body", "")[:500]
+    ctx = ResumeContext(
+        identity_name=task.get("identity_name") or "",
+        target_id=task.get("target_id") or "claude-code",
+        session_id=task["session_id"],
+        commit_sha=task.get("commit_sha") or "",
+        error_message=f"Human comment on the issue:\n{comment_body}",
+        original_event_id=task["id"],
+        item_number=item_number,
+        claim_token=task.get("claim_token") or "",
+    )
+    return _execute_resume(ctx, event, fc, failure_status=None)
 
 
 def _resume_agent(
@@ -390,6 +534,7 @@ def run_loop() -> None:
     settings = get_settings()
     fc = FCClient()
     kanban = KanbanClient()
+    seen_ci_keys: set[str] = set()  # M3: CI-failure coalescing
 
     logger.info("dispatcher started — poll interval %ds, batch size %d",
                 settings.poll_interval_seconds, settings.batch_size)
@@ -422,14 +567,27 @@ def run_loop() -> None:
                 )
 
                 if decision.sync_task:
-                    # M2: agent-produced signal (plan comment / agent PR)
-                    # → patch the original task, no agent dispatch.
+                    # M2/M3: agent-produced signal (plan comment / agent
+                    # PR / CI success) → patch the original task, no
+                    # agent dispatch.
                     _sync_task_state(event, decision, fc)
                     ack_results.append({
                         "event_id": event["id"],
                         "claim_token": event["claim_token"],
                         "status": "completed",
                         "message": decision.reason,
+                    })
+                    continue
+
+                if decision.ocr_trigger:
+                    # M3: OpenCodeReview feedback → resume the original task.
+                    result = _dispatch(event, decision, fc)
+                    ack_results.append({
+                        "event_id": event["id"],
+                        "claim_token": event["claim_token"],
+                        "status": result["status"],
+                        "agent_id": "resume",
+                        "message": result.get("message", ""),
                     })
                     continue
 
@@ -456,6 +614,21 @@ def run_loop() -> None:
                         "message": decision.reason,
                     })
                     continue
+
+                if decision.agent_type == "resume" and decision.resume_context:
+                    # M3: one CI failure fires workflow_run + several
+                    # check_run events — resume only once per (commit, run).
+                    key = _ci_dedup_key(event, decision)
+                    if key in seen_ci_keys:
+                        logger.info("duplicate CI trigger skipped: %s", key)
+                        ack_results.append({
+                            "event_id": event["id"],
+                            "claim_token": event["claim_token"],
+                            "status": "completed",
+                            "message": f"duplicate CI trigger {key}",
+                        })
+                        continue
+                    seen_ci_keys.add(key)
 
                 # ---- dispatch ----
                 # 1. Kanban → In progress

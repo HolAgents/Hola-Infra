@@ -26,15 +26,17 @@ class ResumeContext:
     error_message: str        # human-readable CI error
     original_event_id: int    # event_id of the original task
     item_number: int | None = None  # issue/PR number of the original task (workspace path)
+    claim_token: str = ""     # the ORIGINAL event's claim token (for patch ownership)
 
 
 @dataclass
 class SyncTask:
     """State sync for an EXISTING task — no agent dispatch, the puller
-    patches the original task event instead (M2)."""
-    task_status: str                       # planned | pr_opened | ...
+    patches the original task event instead (M2/M3)."""
+    task_status: str                       # planned | pr_opened | ci_passed | ...
     commit_sha: str | None = None
     item_number: int | None = None         # override when derived from branch name
+    event_id: int | None = None            # direct target event (by-commit lookups)
 
 
 @dataclass
@@ -45,6 +47,7 @@ class RouteDecision:
     skip_ack: bool = False    # True → ack as "completed" immediately
     resume_context: ResumeContext | None = None  # CI resume only
     sync_task: SyncTask | None = None             # state sync (no dispatch)
+    ocr_trigger: int | None = None                # PR number of an OCR review comment (M3)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +134,17 @@ def route(event: dict[str, Any], fc_client=None) -> RouteDecision:
                     skip_ack=True,
                     sync_task=SyncTask("planned"),
                 )
+            if sender == "github-actions[bot]" and "<!-- ocr-" in comment_body:
+                # OpenCodeReview feedback — the puller resolves the PR's
+                # head sha and resumes the original task (M3).
+                pr_number = (payload.get("issue") or {}).get("number")
+                if pr_number:
+                    return RouteDecision(
+                        False,
+                        reason="OCR review comment — resume original task",
+                        skip_ack=True,
+                        ocr_trigger=pr_number,
+                    )
             if _is_mention_or_command(comment_body):
                 return RouteDecision(True, agent_type="response", reason="mention/command")
         return RouteDecision(False, reason="comment — no mention", skip_ack=True)
@@ -170,13 +184,26 @@ def _route_ci_event(event: dict[str, Any], fc_client=None) -> RouteDecision:
     if action != "completed":
         return RouteDecision(False, reason=f"{event_type} {action} — ignored", skip_ack=True)
 
+    # commit SHA extraction: check_run carries a TOP-LEVEL head_sha;
+    # workflow_run nests head_commit.id (the old code read only the
+    # latter, so check_run failures always fell through to orphan).
+    commit_sha = ci_obj.get("head_sha") or (ci_obj.get("head_commit") or {}).get("id", "")
+
+    if conclusion == "success" and commit_sha and fc_client is not None:
+        # CI green for a known commit → mark the original task ci_passed.
+        task = fc_client.query_by_commit(commit_sha)
+        if task and task.get("session_id"):
+            return RouteDecision(
+                False,
+                reason=f"{event_type} success — sync ci_passed",
+                skip_ack=True,
+                sync_task=SyncTask("ci_passed", event_id=task["id"]),
+            )
+
     if conclusion not in ("failure", "cancelled", "timed_out"):
         return RouteDecision(False, reason=f"{event_type} ok ({conclusion})", skip_ack=True)
 
     # ---- CI failure — try to find original task ----
-    head_commit = ci_obj.get("head_commit", {})
-    commit_sha = head_commit.get("id", "")
-
     if commit_sha and fc_client is not None:
         task = fc_client.query_by_commit(commit_sha)
         if task and task.get("session_id"):
@@ -197,6 +224,7 @@ def _route_ci_event(event: dict[str, Any], fc_client=None) -> RouteDecision:
                     error_message=_extract_ci_error(ci_obj, event_type),
                     original_event_id=task["id"],
                     item_number=item_number,
+                    claim_token=task.get("claim_token") or "",
                 ),
             )
 
