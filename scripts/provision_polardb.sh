@@ -35,9 +35,12 @@ if [ -z "$CLUSTER_ID" ]; then
   PW=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
   echo "::add-mask::$PW"
   echo "$PW" > /tmp/hola_db_pw
+  # Dump the parameter schema for debugging future API drift.
+  aliyun polardb CreateDBCluster --help 2>&1 | grep -iE "serverless|scale|dbnodeclass" | head -20 || true
   aliyun polardb CreateDBCluster --region "$REGION" \
     --DBType PostgreSQL --DBVersion 14 --PayType Postpaid \
     --ServerlessType AgileServerless --ScaleMin 1 --ScaleMax 8 \
+    --ScaleRoNumMin 1 --ScaleRoNumMax 1 \
     --DBNodeClass polar.pg.sl.small \
     --DBClusterDescription "$CLUSTER_DESC" \
     --ZoneId "$ZONE_ID" --VPCId "$VPC_ID" --VSwitchId "$VSW_ID"
