@@ -72,6 +72,22 @@ class FCClient:
         return resp.json().get("events", [])
 
     # ------------------------------------------------------------------
+    # Heartbeat (claim lease refresh)
+    # ------------------------------------------------------------------
+
+    def heartbeat(self, event_id: int, claim_token: str) -> bool:
+        """POST /api/events/{id}/heartbeat — refresh the claim lease."""
+        try:
+            resp = self._client.post(
+                f"{self._base}/api/events/{event_id}/heartbeat",
+                json={"claim_token": claim_token},
+            )
+            return resp.status_code == 200
+        except Exception as exc:
+            logger.warning("heartbeat failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------
 

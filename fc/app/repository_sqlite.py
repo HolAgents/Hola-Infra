@@ -386,3 +386,22 @@ def patch_event(conn, event_id: int, patch: dict) -> dict | None:
         "SELECT * FROM events WHERE id = ?", (event_id,)
     ).fetchone()
     return dict(result) if result else None
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat (claim lease refresh)
+# ---------------------------------------------------------------------------
+
+def heartbeat(conn, event_id: int, claim_token: str) -> bool:
+    """Refresh ``claimed_at`` for a processing event held by *claim_token*.
+
+    Returns True when the lease was refreshed; False when the event is
+    not found, not processing, or the token does not match.
+    """
+    cur = conn.execute(
+        """UPDATE events SET claimed_at = datetime('now')
+           WHERE id = ? AND claim_token = ? AND status = 'processing'""",
+        (event_id, claim_token),
+    )
+    conn.commit()
+    return cur.rowcount > 0
