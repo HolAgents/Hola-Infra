@@ -12,7 +12,11 @@ Credentials come from the OIDC-injected ALIBABA_CLOUD_* env vars
 import os
 
 from alibabacloud_fc20230330.client import Client
-from alibabacloud_fc20230330.models import UpdateFunctionRequest, VPCConfig
+from alibabacloud_fc20230330.models import (
+    UpdateFunctionInput,
+    UpdateFunctionRequest,
+    VPCConfig,
+)
 from alibabacloud_tea_openapi.models import Config
 
 FUNCTION_NAME = os.environ["FC_FUNCTION_NAME"]
@@ -21,11 +25,16 @@ REGION = os.environ.get("ALIBABA_CLOUD_REGION_ID", "cn-hangzhou")
 
 def main() -> None:
     client = Client(Config(region_id=REGION))
+    # UpdateFunctionRequest wraps the actual config in `body`
+    # (UpdateFunctionInput) — the FC 3.0 SDK shape, verified via
+    # inspect.signature on v4.7.9.
     request = UpdateFunctionRequest(
-        vpc_config=VPCConfig(
-            vpc_id=os.environ["VPC_ID"],
-            security_group_id=os.environ["SECURITY_GROUP_ID"],
-            v_switch_ids=[os.environ["VSWITCH_ID"]],
+        body=UpdateFunctionInput(
+            vpc_config=VPCConfig(
+                vpc_id=os.environ["VPC_ID"],
+                security_group_id=os.environ["SECURITY_GROUP_ID"],
+                v_switch_ids=[os.environ["VSWITCH_ID"]],
+            ),
         ),
     )
     response = client.update_function(FUNCTION_NAME, request)
