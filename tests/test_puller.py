@@ -26,6 +26,24 @@ def test_parse_commit_marker_valid():
     ) == "abc123def456"
 
 
+def test_parse_commit_marker_new_tag_format():
+    sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+    assert _parse_commit_marker(
+        f"Final message:\n<CommitSha>{sha}</CommitSha>\n"
+    ) == sha
+
+
+def test_parse_commit_marker_new_tag_with_surrounding_text():
+    sha = "f" * 40
+    stdout = f"Working...\n<CommitSha>{sha}</CommitSha>"
+    assert _parse_commit_marker(stdout) == sha
+
+
+def test_parse_commit_marker_new_tag_rejects_short_sha():
+    # Only full 40-char SHAs match the tag format
+    assert _parse_commit_marker("<CommitSha>abc123</CommitSha>") is None
+
+
 def test_parse_commit_marker_not_found():
     assert _parse_commit_marker("No marker here") is None
 
