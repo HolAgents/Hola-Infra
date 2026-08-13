@@ -16,7 +16,8 @@ def test_derive_path_is_deterministic(tmp_path):
     a = workspace.derive_path("HolAgents/Foo-Bar", 42)
     b = workspace.derive_path("HolAgents/Foo-Bar", 42)
     assert a == b
-    assert str(a).endswith("HolAgents__Foo-Bar" + "\\item-42" or "/item-42")
+    assert a.name == "item-42"
+    assert a.parent.name == "HolAgents__Foo-Bar"
     assert a != workspace.derive_path("HolAgents/Other", 42)
     assert a != workspace.derive_path("HolAgents/Foo-Bar", 7)
 
