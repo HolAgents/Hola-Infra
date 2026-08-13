@@ -133,6 +133,59 @@ def test_run_agent_prompt_includes_marker():
     assert logger is not None  # module loads correctly
 
 
+class _FakeFC:
+    """Minimal FCClient double for sync/resume tests."""
+
+    def __init__(self, events):
+        self.events = events
+        self.patches = []
+
+    def query_events(self, repo=None, limit=200):
+        return self.events
+
+    def patch_event(self, event_id, patch):
+        self.patches.append((event_id, patch))
+        return {"id": event_id, **patch}
+
+
+def test_sync_task_state_patches_original_task():
+    from dispatcher.puller import _sync_task_state
+    from dispatcher.router import RouteDecision, SyncTask
+
+    original = {
+        "id": 3,
+        "event_type": "issues",
+        "claim_token": "orig-token",
+        "session_id": "sess-1",
+        "payload": {"issue": {"number": 7}},
+    }
+    fc = _FakeFC([original])
+    event = {
+        "event_type": "issue_comment",
+        "repo_full_name": "HolAgents/demo",
+        "payload": {"issue": {"number": 7}},
+    }
+    decision = RouteDecision(False, skip_ack=True, sync_task=SyncTask("planned"))
+    _sync_task_state(event, decision, fc)
+
+    assert fc.patches == [(3, {"claim_token": "orig-token", "task_status": "planned"})]
+
+
+def test_sync_task_state_no_original_task_is_noop():
+    from dispatcher.puller import _sync_task_state
+    from dispatcher.router import RouteDecision, SyncTask
+
+    fc = _FakeFC([])  # nothing with a session
+    event = {
+        "event_type": "issue_comment",
+        "repo_full_name": "HolAgents/demo",
+        "payload": {"issue": {"number": 7}},
+    }
+    decision = RouteDecision(False, skip_ack=True, sync_task=SyncTask("planned"))
+    _sync_task_state(event, decision, fc)
+    assert fc.patches == []
+
+
 def test_dispatch_wires_workspace_and_identity_env(monkeypatch, tmp_path):
     """M1: _dispatch launches the agent with cwd=workspace, injected
     identity env, configurable claude_bin, and the runbook skill named."""
