@@ -19,6 +19,16 @@ services:
         name: hola-webhook-service-staging
         description: GitHub webhook receiver (staging) with PostgreSQL on PolarDB
         internetAccess: true
+        # Dedicated user VPC (the FC-managed DefaultNas VPC rejects user
+        # resources — Hola-Infra#36). Values come from the provisioning
+        # workflow output (repo variables). FC 2.0: VPC is a SERVICE-level
+        # setting — a function-level vpcConfig is silently dropped (that
+        # is why the deployed functions ran without a VPC path).
+        vpcConfig:
+          vpcId: ${env.VPC_ID}
+          securityGroupId: ${env.SECURITY_GROUP_ID}
+          vSwitchIds:
+            - ${env.VSWITCH_ID}
       function:
         name: webhook-ingest-staging
         runtime: python3.10
@@ -26,14 +36,6 @@ services:
         memorySize: 256
         timeout: 30
         instanceConcurrency: 1
-        # Dedicated user VPC (the FC-managed DefaultNas VPC rejects user
-        # resources — Hola-Infra#36). Values come from the provisioning
-        # workflow output (repo variables).
-        vpcConfig:
-          vpcId: ${env.VPC_ID}
-          securityGroupId: ${env.SECURITY_GROUP_ID}
-          vSwitchIds:
-            - ${env.VSWITCH_ID}
         environmentVariables:
           GITHUB_WEBHOOK_SECRET: ${env.GITHUB_WEBHOOK_SECRET}
           API_KEY: ${env.API_KEY}

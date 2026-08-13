@@ -216,15 +216,16 @@ jobs:
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
         run: s deploy -y --use-local -t s.staging.yaml
 
-      - name: Enforce vpcConfig (FC 3.0 API)
+      - name: Enforce vpcConfig (FC 2.0 API)
         working-directory: fc
         env:
-          FC_FUNCTION_NAME: webhook-ingest-staging
+          FC_SERVICE_NAME: hola-webhook-service-staging
+          FC_ACCOUNT_ID: ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }}
           VPC_ID: ${{ vars.VPC_ID }}
           VSWITCH_ID: ${{ vars.VSWITCH_ID }}
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
         run: |
-          pip install -q alibabacloud-fc20230330
+          pip install -q alibabacloud-fc-open20210406
           python scripts/enforce_vpc.py
 
   deploy-production:
@@ -280,13 +281,14 @@ jobs:
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
         run: s deploy -y --use-local
 
-      - name: Enforce vpcConfig (FC 3.0 API)
+      - name: Enforce vpcConfig (FC 2.0 API)
         working-directory: fc
         env:
-          FC_FUNCTION_NAME: webhook-ingest
+          FC_SERVICE_NAME: hola-webhook-service
+          FC_ACCOUNT_ID: ${{ secrets.ALIBABA_CLOUD_ACCOUNT_ID }}
           VPC_ID: ${{ vars.VPC_ID }}
           VSWITCH_ID: ${{ vars.VSWITCH_ID }}
           SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
         run: |
-          pip install -q alibabacloud-fc20230330
+          pip install -q alibabacloud-fc-open20210406
           python scripts/enforce_vpc.py
