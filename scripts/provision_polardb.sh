@@ -233,10 +233,11 @@ if ! echo "$SG_RULES" | jq -e '.. | objects | select(.Direction? == "egress")' >
 fi
 
 say "Deployed FC function vpcConfig"
-# Verifies the deploy actually wired the user VPC + SG into the function
-# (FC 3.0 may need a service name depending on the CLI's API version —
-# print raw output so failures are visible).
-aliyun fc GetFunction --region "$REGION" --functionName webhook-ingest 2>&1 | jq -c '{functionName, vpcConfig}' 2>/dev/null || echo "fc-getfunction-failed"
+# Verifies the deploy actually wired the user VPC + SG into the function.
+# Print the RAW response (healthz shows src=21.0.17.103 — the instance
+# has no VPC path, so either vpcConfig was never applied or the ENI
+# never attached; this call reads the deployed truth).
+aliyun fc GetFunction --region "$REGION" --functionName webhook-ingest 2>&1 || echo "fc-getfunction-exit=$?"
 
 say "Endpoint"
 # DescribeDBClusterEndpoints is the API that actually returns the
