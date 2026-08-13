@@ -61,7 +61,8 @@ echo "security_group=$SG_ID"
 
 say "Find or create cluster"
 CLUSTER_ID=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
-if [ -z "$CLUSTER_ID" ]; then
+
+create_cluster() {
   PW=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 20)
   echo "::add-mask::$PW"
   echo "$PW" > /tmp/hola_db_pw
@@ -104,9 +105,27 @@ if [ -z "$CLUSTER_ID" ]; then
     sleep 15
   done
   [ "$ST" = "Running" ] || { echo "FATAL: cluster not running (status=$ST)"; exit 1; }
+}
+
+if [ -z "$CLUSTER_ID" ]; then
+  create_cluster
 else
   say "Cluster exists: $CLUSTER_ID"
   PW=$(cat /tmp/hola_db_pw 2>/dev/null || echo "")
+  if [ -z "$PW" ]; then
+    # Orphan cluster from an interrupted run: the password only lives in
+    # the creating run's runner temp file. The ledger is empty — delete
+    # and recreate so the password and account are created together.
+    say "No stored password for existing cluster — recreating"
+    aliyun polardb DeleteDBCluster --region "$REGION" --DBClusterId "$CLUSTER_ID" >/dev/null
+    for i in $(seq 1 30); do
+      GONE=$(aliyun polardb DescribeDBClusters --region "$REGION" | jq -r --arg d "$CLUSTER_DESC" '.. | objects | select(.DBClusterId? != null and (.DBClusterDescription? // "" == $d)) | .DBClusterId' | head -1)
+      [ -z "$GONE" ] && break
+      sleep 10
+    done
+    CLUSTER_ID=""
+    create_cluster
+  fi
 fi
 echo "cluster=$CLUSTER_ID"
 
